@@ -10,27 +10,44 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike Server v7 — Bitunix fixed' });
+  res.json({ status: 'ok', message: 'CryptoMike Server v9 — firma oficial Bitunix' });
 });
 
-// ═══════════════════════════
-// BITUNIX — firma con nonce
-// ═══════════════════════════
-function signBitunix(apiKey, secret, nonce, timestamp, method, path, queryStr, bodyStr) {
-  // Bitunix signature: HMAC-SHA256 of (apiKey + nonce + timestamp + method + path + queryStr + bodyStr)
-  const msg = apiKey + nonce + timestamp + queryStr + bodyStr;
-  return crypto.createHmac('sha256', secret).update(msg).digest('hex');
+function signBitunix(apiKey, secret, nonce, timestamp, queryStr, bodyStr) {
+  // digest = SHA256(nonce + timestamp + apiKey + queryParams + body)
+  // sign   = SHA256(digest + secretKey)
+  const digestInput = nonce + timestamp + apiKey + (queryStr || '') + (bodyStr || '');
+  const digest = crypto.createHash('sha256').update(digestInput).digest('hex');
+  const sign = crypto.createHash('sha256').update(digest + secret).digest('hex');
+  return sign;
+}
+
+function buildQueryStr(params) {
+  if (!params || Object.keys(params).length === 0) return '';
+  // Ordenar por Key en ASCII ascendente y concatenar sin separadores
+  return Object.keys(params).sort().map(k => k + params[k]).join('');
+}
+
+function buildBodyStr(obj) {
+  if (!obj) return '';
+  // Sin espacios - JSON.stringify por defecto no añade espacios
+  return JSON.stringify(obj);
 }
 
 function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
   return new Promise((resolve, reject) => {
     const ts = Date.now().toString();
-    const nonce = crypto.randomBytes(16).toString('hex');
-    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
-    const queryStr = queryParams ? new URLSearchParams(queryParams).toString() : '';
-    const sign = signBitunix(apiKey, secret, nonce, ts, method, path, queryStr, bodyStr);
+    const nonce = crypto.randomBytes(16).toString('hex').substring(0, 32);
+    const bodyStr = buildBodyStr(bodyObj);
+    const queryStr = buildQueryStr(queryParams);
+    const sign = signBitunix(apiKey, secret, nonce, ts, queryStr, bodyStr);
 
-    const fullPath = queryStr ? `${path}?${queryStr}` : path;
+    // Para GET con query params, añadirlos a la URL en orden normal
+    let fullPath = path;
+    if (queryParams && Object.keys(queryParams).length > 0) {
+      const urlParams = new URLSearchParams(queryParams).toString();
+      fullPath = `${path}?${urlParams}`;
+    }
 
     const headers = {
       'Content-Type': 'application/json',
@@ -41,7 +58,7 @@ function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
       'language': 'en-US'
     };
 
-    console.log(`Bitunix ${method} ${path}`);
+    console.log(`Bitunix ${method} ${path} | nonce:${nonce.substring(0,8)}... | queryStr:"${queryStr}" | bodyStr:"${bodyStr.substring(0,80)}"`);
 
     const options = {
       hostname: 'fapi.bitunix.com',
