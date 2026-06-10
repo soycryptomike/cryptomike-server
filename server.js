@@ -8,26 +8,15 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const BITMART_HOST = 'api-cloud.bitmart.com';
+const BITMART_HOST = 'api-cloud-v2.bitmart.com';
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike BitMart Server v3' });
+  res.json({ status: 'ok', message: 'CryptoMike BitMart Server v5' });
 });
 
-// ═══════════════════════════
-// FIRMA BITMART V2 API
-// El formato correcto es: timestamp + "#" + memo + "#" + queryString
-// Para POST con body: timestamp + "#" + memo + "#" + bodyString
-// ═══════════════════════════
 function signBitmart(secret, timestamp, memo, bodyStr) {
-  // BitMart: si hay memo → timestamp#memo#body
-  // Si no hay memo → timestamp#body (una sola almohadilla)
-  let message;
-  if (memo && memo.trim() !== '') {
-    message = timestamp + '#' + memo + '#' + (bodyStr || '');
-  } else {
-    message = timestamp + '#' + (bodyStr || '');
-  }
+  // BitMart siempre: timestamp#memo#body (memo puede ser vacío pero los # son obligatorios)
+  const message = timestamp + '#' + (memo || '') + '#' + (bodyStr || '');
   console.log('Sign message:', message.substring(0, 120));
   return crypto.createHmac('sha256', secret).update(message).digest('hex');
 }
