@@ -8,16 +8,133 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const BITMART_HOST = 'api-cloud-v2.bitmart.com';
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike BitMart Server v5' });
+  res.json({ status: 'ok', message: 'CryptoMike Server v6 — Bitunix + BitMart' });
 });
 
+// ═══════════════════════════
+// BITUNIX
+// ═══════════════════════════
+function signBitunix(secret, timestamp, method, path, body) {
+  const msg = timestamp + method + path + (body || '');
+  return crypto.createHmac('sha256', Buffer.from(secret)).update(msg).digest('hex');
+}
+
+function bitunixCall(method, path, apiKey, secret, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const ts = Date.now().toString();
+    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
+    const sign = signBitunix(secret, ts, method, path, bodyStr);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'api-key': apiKey,
+      'timestamp': ts,
+      'sign': sign
+    };
+
+    const options = {
+      hostname: 'fapi.bitunix.com',
+      port: 443,
+      path: path,
+      method: method,
+      headers: headers
+    };
+
+    console.log(`Bitunix ${method} ${path}`);
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch(e) { resolve({ raw: data }); }
+      });
+    });
+
+    req.on('error', (e) => reject(e));
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+// Bitunix — Posiciones
+app.post('/bitunix/positions', async (req, res) => {
+  const { apiKey, secret } = req.body;
+  if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
+  try {
+    const result = await bitunixCall('GET', '/api/v1/futures/position/get_pending_positions', apiKey, secret, null);
+    console.log('Bitunix positions:', JSON.stringify(result).substring(0, 150));
+    res.json(result);
+  } catch(e) {
+    console.error('Bitunix positions error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bitunix — Apalancamiento
+app.post('/bitunix/leverage', async (req, res) => {
+  const { apiKey, secret, symbol, leverage } = req.body;
+  if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
+  try {
+    const result = await bitunixCall('POST', '/api/v1/futures/position/set_leverage', apiKey, secret, {
+      symbol, leverage: parseInt(leverage), marginMode: 'ISOLATED'
+    });
+    console.log('Bitunix leverage:', JSON.stringify(result).substring(0, 150));
+    res.json(result);
+  } catch(e) {
+    console.error('Bitunix leverage error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bitunix — Ejecutar orden
+app.post('/bitunix/order', async (req, res) => {
+  const { apiKey, secret, symbol, side, qty, sl, tp } = req.body;
+  if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
+  try {
+    const body = {
+      symbol,
+      qty: String(qty),
+      side: side === 'LONG' ? 'BUY' : 'SELL',
+      tradeSide: 'OPEN',
+      orderType: 'MARKET',
+      effect: 'GTC',
+      reduceOnly: false
+    };
+    if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK_PRICE'; }
+    if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK_PRICE'; }
+
+    console.log('Bitunix order body:', JSON.stringify(body));
+    const result = await bitunixCall('POST', '/api/v1/futures/order/create', apiKey, secret, body);
+    console.log('Bitunix order result:', JSON.stringify(result).substring(0, 200));
+    res.json(result);
+  } catch(e) {
+    console.error('Bitunix order error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bitunix — Cerrar posición
+app.post('/bitunix/close', async (req, res) => {
+  const { apiKey, secret, symbol } = req.body;
+  if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
+  try {
+    const result = await bitunixCall('POST', '/api/v1/futures/position/close_all', apiKey, secret, { symbol });
+    console.log('Bitunix close:', JSON.stringify(result).substring(0, 150));
+    res.json(result);
+  } catch(e) {
+    console.error('Bitunix close error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════
+// BITMART (mantenemos por si acaso)
+// ═══════════════════════════
 function signBitmart(secret, timestamp, memo, bodyStr) {
-  // BitMart siempre: timestamp#memo#body (memo puede ser vacío pero los # son obligatorios)
   const message = timestamp + '#' + (memo || '') + '#' + (bodyStr || '');
-  console.log('Sign message:', message.substring(0, 120));
   return crypto.createHmac('sha256', secret).update(message).digest('hex');
 }
 
@@ -26,21 +143,16 @@ function bitmartCall(method, path, apiKey, secret, memo, bodyObj) {
     const timestamp = Date.now().toString();
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
     const sign = signBitmart(secret, timestamp, memo, bodyStr);
-
     const headers = {
       'Content-Type': 'application/json',
       'X-BM-KEY': apiKey,
       'X-BM-TIMESTAMP': timestamp,
       'X-BM-SIGN': sign
     };
-    if (memo && memo.trim() !== '') {
-      headers['X-BM-MEMO'] = memo;
-    }
-
-    console.log('Headers:', JSON.stringify({ key: apiKey.substring(0,8)+'...', timestamp, sign: sign.substring(0,16)+'...' }));
+    if (memo && memo.trim() !== '') headers['X-BM-MEMO'] = memo;
 
     const options = {
-      hostname: BITMART_HOST,
+      hostname: 'api-cloud-v2.bitmart.com',
       port: 443,
       path: path,
       method: method,
@@ -67,49 +179,30 @@ app.post('/positions', async (req, res) => {
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
     const result = await bitmartCall('GET', '/contract/private/position', apiKey, secret, memo, null);
-    console.log('Positions:', JSON.stringify(result).substring(0, 150));
     res.json(result);
-  } catch(e) {
-    console.error('Positions error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/leverage', async (req, res) => {
   const { apiKey, secret, memo, symbol, leverage, openType } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const body = { symbol, leverage: String(leverage), open_type: openType || 'isolated' };
-    const result = await bitmartCall('POST', '/contract/private/submit-leverage', apiKey, secret, memo, body);
-    console.log('Leverage:', JSON.stringify(result).substring(0, 150));
+    const result = await bitmartCall('POST', '/contract/private/submit-leverage', apiKey, secret, memo,
+      { symbol, leverage: String(leverage), open_type: openType || 'isolated' });
     res.json(result);
-  } catch(e) {
-    console.error('Leverage error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/order', async (req, res) => {
   const { apiKey, secret, memo, symbol, side, size, sl, tp } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const body = {
-      symbol: symbol,
-      side: side === 'LONG' ? 1 : 4,
-      type: 'market',
-      size: parseInt(size)
-    };
+    const body = { symbol, side: side === 'LONG' ? 1 : 4, type: 'market', size: parseInt(size) };
     if (tp && parseFloat(tp) > 0) body.preset_take_profit_price = String(tp);
     if (sl && parseFloat(sl) > 0) body.preset_stop_loss_price = String(sl);
-
-    console.log('Order body:', JSON.stringify(body));
     const result = await bitmartCall('POST', '/contract/private/submit-order', apiKey, secret, memo, body);
-    console.log('Order result:', JSON.stringify(result).substring(0, 200));
     res.json(result);
-  } catch(e) {
-    console.error('Order error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/close', async (req, res) => {
@@ -117,14 +210,10 @@ app.post('/close', async (req, res) => {
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
     const result = await bitmartCall('POST', '/contract/private/cancel-all-order', apiKey, secret, memo, { symbol });
-    console.log('Close:', JSON.stringify(result).substring(0, 150));
     res.json(result);
-  } catch(e) {
-    console.error('Close error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.listen(PORT, () => {
-  console.log(`CryptoMike BitMart Server v3 running on port ${PORT}`);
+  console.log(`CryptoMike Server v6 running on port ${PORT}`);
 });
