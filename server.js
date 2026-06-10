@@ -10,39 +10,46 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike Server v6 — Bitunix + BitMart' });
+  res.json({ status: 'ok', message: 'CryptoMike Server v7 — Bitunix fixed' });
 });
 
 // ═══════════════════════════
-// BITUNIX
+// BITUNIX — firma con nonce
 // ═══════════════════════════
-function signBitunix(secret, timestamp, method, path, body) {
-  const msg = timestamp + method + path + (body || '');
-  return crypto.createHmac('sha256', Buffer.from(secret)).update(msg).digest('hex');
+function signBitunix(apiKey, secret, nonce, timestamp, method, path, queryStr, bodyStr) {
+  // Bitunix signature: HMAC-SHA256 of (apiKey + nonce + timestamp + method + path + queryStr + bodyStr)
+  const msg = apiKey + nonce + timestamp + queryStr + bodyStr;
+  return crypto.createHmac('sha256', secret).update(msg).digest('hex');
 }
 
-function bitunixCall(method, path, apiKey, secret, bodyObj) {
+function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
   return new Promise((resolve, reject) => {
     const ts = Date.now().toString();
+    const nonce = crypto.randomBytes(16).toString('hex');
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
-    const sign = signBitunix(secret, ts, method, path, bodyStr);
+    const queryStr = queryParams ? new URLSearchParams(queryParams).toString() : '';
+    const sign = signBitunix(apiKey, secret, nonce, ts, method, path, queryStr, bodyStr);
+
+    const fullPath = queryStr ? `${path}?${queryStr}` : path;
 
     const headers = {
       'Content-Type': 'application/json',
       'api-key': apiKey,
+      'nonce': nonce,
       'timestamp': ts,
-      'sign': sign
+      'sign': sign,
+      'language': 'en-US'
     };
+
+    console.log(`Bitunix ${method} ${path}`);
 
     const options = {
       hostname: 'fapi.bitunix.com',
       port: 443,
-      path: path,
+      path: fullPath,
       method: method,
       headers: headers
     };
-
-    console.log(`Bitunix ${method} ${path}`);
 
     const req = https.request(options, (res) => {
       let data = '';
@@ -59,37 +66,39 @@ function bitunixCall(method, path, apiKey, secret, bodyObj) {
   });
 }
 
-// Bitunix — Posiciones
+// Posiciones
 app.post('/bitunix/positions', async (req, res) => {
   const { apiKey, secret } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const result = await bitunixCall('GET', '/api/v1/futures/position/get_pending_positions', apiKey, secret, null);
-    console.log('Bitunix positions:', JSON.stringify(result).substring(0, 150));
+    const result = await bitunixCall('GET', '/api/v1/futures/position/get_pending_positions', apiKey, secret, {}, null);
+    console.log('Positions:', JSON.stringify(result).substring(0, 200));
     res.json(result);
   } catch(e) {
-    console.error('Bitunix positions error:', e.message);
+    console.error('Positions error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// Bitunix — Apalancamiento
+// Apalancamiento
 app.post('/bitunix/leverage', async (req, res) => {
   const { apiKey, secret, symbol, leverage } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const result = await bitunixCall('POST', '/api/v1/futures/position/set_leverage', apiKey, secret, {
-      symbol, leverage: parseInt(leverage), marginMode: 'ISOLATED'
+    const result = await bitunixCall('POST', '/api/v1/futures/account/change_leverage', apiKey, secret, null, {
+      symbol,
+      leverage: parseInt(leverage),
+      marginCoin: 'USDT'
     });
-    console.log('Bitunix leverage:', JSON.stringify(result).substring(0, 150));
+    console.log('Leverage:', JSON.stringify(result).substring(0, 200));
     res.json(result);
   } catch(e) {
-    console.error('Bitunix leverage error:', e.message);
+    console.error('Leverage error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// Bitunix — Ejecutar orden
+// Ejecutar orden
 app.post('/bitunix/order', async (req, res) => {
   const { apiKey, secret, symbol, side, qty, sl, tp } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
@@ -103,35 +112,38 @@ app.post('/bitunix/order', async (req, res) => {
       effect: 'GTC',
       reduceOnly: false
     };
-    if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK_PRICE'; }
-    if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK_PRICE'; }
+    if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK'; }
+    if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK'; }
 
-    console.log('Bitunix order body:', JSON.stringify(body));
-    const result = await bitunixCall('POST', '/api/v1/futures/order/create', apiKey, secret, body);
-    console.log('Bitunix order result:', JSON.stringify(result).substring(0, 200));
+    console.log('Order body:', JSON.stringify(body));
+    const result = await bitunixCall('POST', '/api/v1/futures/trade/place_order', apiKey, secret, null, body);
+    console.log('Order result:', JSON.stringify(result).substring(0, 200));
     res.json(result);
   } catch(e) {
-    console.error('Bitunix order error:', e.message);
+    console.error('Order error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// Bitunix — Cerrar posición
+// Cerrar posición
 app.post('/bitunix/close', async (req, res) => {
   const { apiKey, secret, symbol } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const result = await bitunixCall('POST', '/api/v1/futures/position/close_all', apiKey, secret, { symbol });
-    console.log('Bitunix close:', JSON.stringify(result).substring(0, 150));
+    const result = await bitunixCall('POST', '/api/v1/futures/trade/flash_close_position', apiKey, secret, null, {
+      symbol,
+      side: 'BUY'
+    });
+    console.log('Close:', JSON.stringify(result).substring(0, 200));
     res.json(result);
   } catch(e) {
-    console.error('Bitunix close error:', e.message);
+    console.error('Close error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
 // ═══════════════════════════
-// BITMART (mantenemos por si acaso)
+// BITMART
 // ═══════════════════════════
 function signBitmart(secret, timestamp, memo, bodyStr) {
   const message = timestamp + '#' + (memo || '') + '#' + (bodyStr || '');
@@ -215,5 +227,5 @@ app.post('/close', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`CryptoMike Server v6 running on port ${PORT}`);
+  console.log(`CryptoMike Server v7 running on port ${PORT}`);
 });
