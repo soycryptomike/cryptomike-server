@@ -2,20 +2,249 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 3000;
 
+// ═══════════════════════════
+// CONFIG
+// ═══════════════════════════
+const TELEGRAM_TOKEN = '8693040210:AAHRZmAnwDT1MMgIGZgtm0yxwXCUm-bCvFQ';
+const TELEGRAM_CHAT_ID = '534252599';
+const ADMIN_EMAIL = 'miguel.tradingm@gmail.com';
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'cryptomike_admin_2026';
+
+// Archivo para guardar UIDs
+const DATA_FILE = '/tmp/cryptomike_users.json';
+
+// ═══════════════════════════
+// UTILIDADES
+// ═══════════════════════════
+function loadUsers() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    }
+  } catch(e) {}
+  return [];
+}
+
+function saveUsers(users) {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2));
+  } catch(e) {
+    console.error('Error saving users:', e.message);
+  }
+}
+
+// ═══════════════════════════
+// SISTEMA DE CONTRASEÑA AUTOMÁTICA
+// Se renueva cada 15 días automáticamente
+// Periodo 1: días 1-15 del mes
+// Periodo 2: días 16-fin del mes
+// ═══════════════════════════
+function getCurrentPassword() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const period = day <= 15 ? 1 : 2;
+  
+  // Semilla determinista basada en año+mes+periodo
+  const seed = `cryptomike_${year}_${month}_${period}_vip2026`;
+  const hash = crypto.createHash('sha256').update(seed).digest('hex');
+  
+  // Contraseña de 8 caracteres: 4 letras mayúsculas + 4 números
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const numbers = '23456789';
+  let pass = '';
+  for (let i = 0; i < 4; i++) pass += letters[parseInt(hash.substring(i*2, i*2+2), 16) % letters.length];
+  for (let i = 4; i < 8; i++) pass += numbers[parseInt(hash.substring(i*2, i*2+2), 16) % numbers.length];
+  
+  return pass;
+}
+
+function getPasswordExpiry() {
+  const now = new Date();
+  const day = now.getDate();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  
+  if (day <= 15) {
+    return new Date(year, month, 16, 0, 0, 0);
+  } else {
+    return new Date(year, month + 1, 1, 0, 0, 0);
+  }
+}
+
+function getDaysUntilExpiry() {
+  const expiry = getPasswordExpiry();
+  const now = new Date();
+  const diff = expiry - now;
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+// ═══════════════════════════
+// NOTIFICACIONES
+// ═══════════════════════════
+function sendTelegram(message) {
+  const text = encodeURIComponent(message);
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${text}&parse_mode=HTML`;
+  
+  return new Promise((resolve) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        console.log('Telegram sent:', data.substring(0, 100));
+        resolve(data);
+      });
+    }).on('error', (e) => {
+      console.error('Telegram error:', e.message);
+      resolve(null);
+    });
+  });
+}
+
+async function sendEmail(subject, body) {
+  try {
+    const transporter = nodemailer.createTransporter({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER || ADMIN_EMAIL,
+        pass: process.env.EMAIL_PASS || ''
+      }
+    });
+    
+    await transporter.sendMail({
+      from: ADMIN_EMAIL,
+      to: ADMIN_EMAIL,
+      subject: `[CryptoMike VIP] ${subject}`,
+      html: body
+    });
+    console.log('Email sent');
+  } catch(e) {
+    console.error('Email error:', e.message);
+  }
+}
+
+// ═══════════════════════════
+// HEALTH CHECK
+// ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike Server v9 — firma oficial Bitunix' });
+  res.json({ 
+    status: 'ok', 
+    message: 'CryptoMike VIP Server v9',
+    password_expires_in_days: getDaysUntilExpiry()
+  });
 });
 
+// ═══════════════════════════
+// VERIFICAR CONTRASEÑA + REGISTRAR UID
+// ═══════════════════════════
+app.post('/auth', async (req, res) => {
+  const { password, uid, exchange } = req.body;
+  
+  if (!password || !uid) {
+    return res.status(400).json({ success: false, error: 'Faltan datos' });
+  }
+  
+  const currentPass = getCurrentPassword();
+  
+  if (password.toUpperCase() !== currentPass.toUpperCase()) {
+    console.log(`Auth failed: uid=${uid}, password=${password}, expected=${currentPass}`);
+    return res.json({ success: false, error: 'Contraseña incorrecta o expirada' });
+  }
+  
+  // Guardar usuario
+  const users = loadUsers();
+  const existingIndex = users.findIndex(u => u.uid === uid);
+  const userData = {
+    uid,
+    exchange: exchange || 'desconocido',
+    lastAccess: new Date().toISOString(),
+    firstAccess: existingIndex >= 0 ? users[existingIndex].firstAccess : new Date().toISOString()
+  };
+  
+  const isNew = existingIndex < 0;
+  if (existingIndex >= 0) {
+    users[existingIndex] = userData;
+  } else {
+    users.push(userData);
+  }
+  saveUsers(users);
+  
+  // Notificar solo si es nuevo usuario
+  if (isNew) {
+    const msg = `🆕 <b>Nuevo usuario CryptoMike VIP</b>\n\n👤 UID: <code>${uid}</code>\n📊 Exchange: ${exchange}\n📅 Fecha: ${new Date().toLocaleString('es-ES')}\n\n✅ Acceso concedido`;
+    await sendTelegram(msg);
+    await sendEmail(
+      `Nuevo usuario: ${uid}`,
+      `<h2>Nuevo usuario en CryptoMike VIP</h2><p><b>UID:</b> ${uid}</p><p><b>Exchange:</b> ${exchange}</p><p><b>Fecha:</b> ${new Date().toLocaleString('es-ES')}</p>`
+    );
+  }
+  
+  res.json({ 
+    success: true, 
+    daysUntilExpiry: getDaysUntilExpiry(),
+    message: `Acceso concedido. La contraseña expira en ${getDaysUntilExpiry()} días.`
+  });
+});
+
+// ═══════════════════════════
+// PANEL ADMIN — ver usuarios
+// ═══════════════════════════
+app.get('/admin/users', (req, res) => {
+  const secret = req.headers['admin-secret'] || req.query.secret;
+  if (secret !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  
+  const users = loadUsers();
+  const currentPass = getCurrentPassword();
+  
+  res.json({
+    total_users: users.length,
+    current_password: currentPass,
+    password_expires_in_days: getDaysUntilExpiry(),
+    password_expiry: getPasswordExpiry().toISOString(),
+    users: users.sort((a, b) => new Date(b.lastAccess) - new Date(a.lastAccess))
+  });
+});
+
+// ═══════════════════════════
+// OBTENER CONTRASEÑA ACTUAL (solo admin)
+// ═══════════════════════════
+app.get('/admin/password', async (req, res) => {
+  const secret = req.headers['admin-secret'] || req.query.secret;
+  if (secret !== ADMIN_SECRET) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  
+  const currentPass = getCurrentPassword();
+  const daysLeft = getDaysUntilExpiry();
+  
+  // Enviar por Telegram al consultar
+  const msg = `🔑 <b>Contraseña CryptoMike VIP</b>\n\n🗝️ Contraseña: <code>${currentPass}</code>\n⏱️ Expira en: ${daysLeft} días\n📅 Fecha consulta: ${new Date().toLocaleString('es-ES')}\n\n📢 Envía esta contraseña a tu canal VIP`;
+  await sendTelegram(msg);
+  
+  res.json({
+    password: currentPass,
+    expires_in_days: daysLeft,
+    expiry_date: getPasswordExpiry().toISOString()
+  });
+});
+
+// ═══════════════════════════
+// BITUNIX
+// ═══════════════════════════
 function signBitunix(apiKey, secret, nonce, timestamp, queryStr, bodyStr) {
-  // digest = SHA256(nonce + timestamp + apiKey + queryParams + body)
-  // sign   = SHA256(digest + secretKey)
   const digestInput = nonce + timestamp + apiKey + (queryStr || '') + (bodyStr || '');
   const digest = crypto.createHash('sha256').update(digestInput).digest('hex');
   const sign = crypto.createHash('sha256').update(digest + secret).digest('hex');
@@ -24,13 +253,11 @@ function signBitunix(apiKey, secret, nonce, timestamp, queryStr, bodyStr) {
 
 function buildQueryStr(params) {
   if (!params || Object.keys(params).length === 0) return '';
-  // Ordenar por Key en ASCII ascendente y concatenar sin separadores
   return Object.keys(params).sort().map(k => k + params[k]).join('');
 }
 
 function buildBodyStr(obj) {
   if (!obj) return '';
-  // Sin espacios - JSON.stringify por defecto no añade espacios
   return JSON.stringify(obj);
 }
 
@@ -42,7 +269,6 @@ function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
     const queryStr = buildQueryStr(queryParams);
     const sign = signBitunix(apiKey, secret, nonce, ts, queryStr, bodyStr);
 
-    // Para GET con query params, añadirlos a la URL en orden normal
     let fullPath = path;
     if (queryParams && Object.keys(queryParams).length > 0) {
       const urlParams = new URLSearchParams(queryParams).toString();
@@ -58,7 +284,7 @@ function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
       'language': 'en-US'
     };
 
-    console.log(`Bitunix ${method} ${path} | nonce:${nonce.substring(0,8)}... | queryStr:"${queryStr}" | bodyStr:"${bodyStr.substring(0,80)}"`);
+    console.log(`Bitunix ${method} ${path}`);
 
     const options = {
       hostname: 'fapi.bitunix.com',
@@ -83,80 +309,50 @@ function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
   });
 }
 
-// Posiciones
 app.post('/bitunix/positions', async (req, res) => {
   const { apiKey, secret } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
     const result = await bitunixCall('GET', '/api/v1/futures/position/get_pending_positions', apiKey, secret, {}, null);
-    console.log('Positions:', JSON.stringify(result).substring(0, 200));
     res.json(result);
-  } catch(e) {
-    console.error('Positions error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Apalancamiento
 app.post('/bitunix/leverage', async (req, res) => {
   const { apiKey, secret, symbol, leverage } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
     const result = await bitunixCall('POST', '/api/v1/futures/account/change_leverage', apiKey, secret, null, {
-      symbol,
-      leverage: parseInt(leverage),
-      marginCoin: 'USDT'
+      symbol, leverage: parseInt(leverage), marginCoin: 'USDT'
     });
-    console.log('Leverage:', JSON.stringify(result).substring(0, 200));
     res.json(result);
-  } catch(e) {
-    console.error('Leverage error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Ejecutar orden
 app.post('/bitunix/order', async (req, res) => {
   const { apiKey, secret, symbol, side, qty, sl, tp } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
     const body = {
-      symbol,
-      qty: String(qty),
+      symbol, qty: String(qty),
       side: side === 'LONG' ? 'BUY' : 'SELL',
-      tradeSide: 'OPEN',
-      orderType: 'MARKET',
-      effect: 'GTC',
-      reduceOnly: false
+      tradeSide: 'OPEN', orderType: 'MARKET',
+      effect: 'GTC', reduceOnly: false
     };
     if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK'; }
     if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK'; }
-
-    console.log('Order body:', JSON.stringify(body));
     const result = await bitunixCall('POST', '/api/v1/futures/trade/place_order', apiKey, secret, null, body);
-    console.log('Order result:', JSON.stringify(result).substring(0, 200));
     res.json(result);
-  } catch(e) {
-    console.error('Order error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Cerrar posición
 app.post('/bitunix/close', async (req, res) => {
   const { apiKey, secret, symbol } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const result = await bitunixCall('POST', '/api/v1/futures/trade/flash_close_position', apiKey, secret, null, {
-      symbol,
-      side: 'BUY'
-    });
-    console.log('Close:', JSON.stringify(result).substring(0, 200));
+    const result = await bitunixCall('POST', '/api/v1/futures/trade/close_all_position', apiKey, secret, null, { symbol });
     res.json(result);
-  } catch(e) {
-    console.error('Close error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════
@@ -179,15 +375,10 @@ function bitmartCall(method, path, apiKey, secret, memo, bodyObj) {
       'X-BM-SIGN': sign
     };
     if (memo && memo.trim() !== '') headers['X-BM-MEMO'] = memo;
-
     const options = {
       hostname: 'api-cloud-v2.bitmart.com',
-      port: 443,
-      path: path,
-      method: method,
-      headers: headers
+      port: 443, path, method, headers
     };
-
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -196,7 +387,6 @@ function bitmartCall(method, path, apiKey, secret, memo, bodyObj) {
         catch(e) { resolve({ raw: data }); }
       });
     });
-
     req.on('error', (e) => reject(e));
     if (bodyStr) req.write(bodyStr);
     req.end();
@@ -243,6 +433,16 @@ app.post('/close', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Notificar contraseña al arrancar
+async function notifyPasswordOnStart() {
+  const pass = getCurrentPassword();
+  const days = getDaysUntilExpiry();
+  const msg = `🚀 <b>CryptoMike VIP Server iniciado</b>\n\n🔑 Contraseña actual: <code>${pass}</code>\n⏱️ Expira en: ${days} días`;
+  await sendTelegram(msg);
+  console.log(`Server started. Current password: ${pass} (expires in ${days} days)`);
+}
+
 app.listen(PORT, () => {
-  console.log(`CryptoMike Server v7 running on port ${PORT}`);
+  console.log(`CryptoMike VIP Server v9 running on port ${PORT}`);
+  notifyPasswordOnStart();
 });
