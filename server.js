@@ -20,9 +20,15 @@ app.get('/', (req, res) => {
 // Para POST con body: timestamp + "#" + memo + "#" + bodyString
 // ═══════════════════════════
 function signBitmart(secret, timestamp, memo, bodyStr) {
-  // BitMart V2: message = timestamp#memo#body
-  const message = timestamp + '#' + (memo || '') + '#' + (bodyStr || '');
-  console.log('Sign message:', message.substring(0, 100));
+  // BitMart: si hay memo → timestamp#memo#body
+  // Si no hay memo → timestamp#body (una sola almohadilla)
+  let message;
+  if (memo && memo.trim() !== '') {
+    message = timestamp + '#' + memo + '#' + (bodyStr || '');
+  } else {
+    message = timestamp + '#' + (bodyStr || '');
+  }
+  console.log('Sign message:', message.substring(0, 120));
   return crypto.createHmac('sha256', secret).update(message).digest('hex');
 }
 
