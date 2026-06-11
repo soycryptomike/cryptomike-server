@@ -330,17 +330,23 @@ app.post('/bitunix/leverage', async (req, res) => {
 });
 
 app.post('/bitunix/order', async (req, res) => {
-  const { apiKey, secret, symbol, side, qty, sl, tp } = req.body;
+  const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
+    // AHORA SÍ LEEMOS EL orderType QUE MANDA LA WEB
     const body = {
       symbol, qty: String(qty),
       side: side === 'LONG' ? 'BUY' : 'SELL',
-      tradeSide: 'OPEN', orderType: 'MARKET',
+      tradeSide: 'OPEN', 
+      orderType: orderType || 'MARKET',
       effect: 'GTC', reduceOnly: false
     };
+    
+    // SI ES LIMITE O STOP, LE PASAMOS EL PRECIO DE ENTRADA
+    if (price) { body.price = String(price); }
     if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK'; }
     if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK'; }
+    
     const result = await bitunixCall('POST', '/api/v1/futures/trade/place_order', apiKey, secret, null, body);
     res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -413,12 +419,22 @@ app.post('/leverage', async (req, res) => {
 });
 
 app.post('/order', async (req, res) => {
-  const { apiKey, secret, memo, symbol, side, size, sl, tp } = req.body;
+  const { apiKey, secret, memo, symbol, side, size, sl, tp, type, price } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const body = { symbol, side: side === 'LONG' ? 1 : 4, type: 'market', size: parseInt(size) };
+    // AHORA SÍ LEEMOS EL type QUE MANDA LA WEB
+    const body = { 
+      symbol, 
+      side: side === 'LONG' ? 1 : 4, 
+      type: type || 'market', 
+      size: parseInt(size) 
+    };
+    
+    // SI ES LIMITE O STOP, LE PASAMOS EL PRECIO DE ENTRADA
+    if (price) { body.price = String(price); }
     if (tp && parseFloat(tp) > 0) body.preset_take_profit_price = String(tp);
     if (sl && parseFloat(sl) > 0) body.preset_stop_loss_price = String(sl);
+    
     const result = await bitmartCall('POST', '/contract/private/submit-order', apiKey, secret, memo, body);
     res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
