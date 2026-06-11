@@ -45,9 +45,6 @@ function saveUsers(users) {
 
 // ═══════════════════════════
 // SISTEMA DE CONTRASEÑA AUTOMÁTICA
-// Se renueva cada 15 días automáticamente
-// Periodo 1: días 1-15 del mes
-// Periodo 2: días 16-fin del mes
 // ═══════════════════════════
 function getCurrentPassword() {
   const now = new Date();
@@ -56,11 +53,9 @@ function getCurrentPassword() {
   const day = now.getDate();
   const period = day <= 15 ? 1 : 2;
   
-  // Semilla determinista basada en año+mes+periodo
   const seed = `cryptomike_${year}_${month}_${period}_vip2026`;
   const hash = crypto.createHash('sha256').update(seed).digest('hex');
   
-  // Contraseña de 8 caracteres: 4 letras mayúsculas + 4 números
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   const numbers = '23456789';
   let pass = '';
@@ -135,110 +130,58 @@ async function sendEmail(subject, body) {
 }
 
 // ═══════════════════════════
-// HEALTH CHECK
+// HEALTH CHECK Y RUTAS ADMIN
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'CryptoMike VIP Server v9',
-    password_expires_in_days: getDaysUntilExpiry()
-  });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v9', password_expires_in_days: getDaysUntilExpiry() });
 });
 
-// ═══════════════════════════
-// VERIFICAR CONTRASEÑA + REGISTRAR UID
-// ═══════════════════════════
 app.post('/auth', async (req, res) => {
   const { password, uid, exchange } = req.body;
-  
-  if (!password || !uid) {
-    return res.status(400).json({ success: false, error: 'Faltan datos' });
-  }
+  if (!password || !uid) return res.status(400).json({ success: false, error: 'Faltan datos' });
   
   const currentPass = getCurrentPassword();
-  
   if (password.toUpperCase() !== currentPass.toUpperCase()) {
-    console.log(`Auth failed: uid=${uid}, password=${password}, expected=${currentPass}`);
     return res.json({ success: false, error: 'Contraseña incorrecta o expirada' });
   }
   
-  // Guardar usuario
   const users = loadUsers();
   const existingIndex = users.findIndex(u => u.uid === uid);
   const userData = {
-    uid,
-    exchange: exchange || 'desconocido',
+    uid, exchange: exchange || 'desconocido',
     lastAccess: new Date().toISOString(),
     firstAccess: existingIndex >= 0 ? users[existingIndex].firstAccess : new Date().toISOString()
   };
   
   const isNew = existingIndex < 0;
-  if (existingIndex >= 0) {
-    users[existingIndex] = userData;
-  } else {
-    users.push(userData);
-  }
+  if (existingIndex >= 0) users[existingIndex] = userData;
+  else users.push(userData);
   saveUsers(users);
   
-  // Notificar solo si es nuevo usuario
   if (isNew) {
     const msg = `🆕 <b>Nuevo usuario CryptoMike VIP</b>\n\n👤 UID: <code>${uid}</code>\n📊 Exchange: ${exchange}\n📅 Fecha: ${new Date().toLocaleString('es-ES')}\n\n✅ Acceso concedido`;
     await sendTelegram(msg);
-    await sendEmail(
-      `Nuevo usuario: ${uid}`,
-      `<h2>Nuevo usuario en CryptoMike VIP</h2><p><b>UID:</b> ${uid}</p><p><b>Exchange:</b> ${exchange}</p><p><b>Fecha:</b> ${new Date().toLocaleString('es-ES')}</p>`
-    );
+    await sendEmail(`Nuevo usuario: ${uid}`, `<h2>Nuevo usuario en CryptoMike VIP</h2><p><b>UID:</b> ${uid}</p><p><b>Exchange:</b> ${exchange}</p>`);
   }
   
-  res.json({ 
-    success: true, 
-    daysUntilExpiry: getDaysUntilExpiry(),
-    message: `Acceso concedido. La contraseña expira en ${getDaysUntilExpiry()} días.`
-  });
+  res.json({ success: true, daysUntilExpiry: getDaysUntilExpiry(), message: `Acceso concedido. La contraseña expira en ${getDaysUntilExpiry()} días.` });
 });
 
-// ═══════════════════════════
-// PANEL ADMIN — ver usuarios
-// ═══════════════════════════
 app.get('/admin/users', (req, res) => {
   const secret = req.headers['admin-secret'] || req.query.secret;
-  if (secret !== ADMIN_SECRET) {
-    return res.status(401).json({ error: 'No autorizado' });
-  }
-  
+  if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'No autorizado' });
   const users = loadUsers();
-  const currentPass = getCurrentPassword();
-  
-  res.json({
-    total_users: users.length,
-    current_password: currentPass,
-    password_expires_in_days: getDaysUntilExpiry(),
-    password_expiry: getPasswordExpiry().toISOString(),
-    users: users.sort((a, b) => new Date(b.lastAccess) - new Date(a.lastAccess))
-  });
+  res.json({ total_users: users.length, current_password: getCurrentPassword(), password_expires_in_days: getDaysUntilExpiry(), users: users.sort((a, b) => new Date(b.lastAccess) - new Date(a.lastAccess)) });
 });
 
-// ═══════════════════════════
-// OBTENER CONTRASEÑA ACTUAL (solo admin)
-// ═══════════════════════════
 app.get('/admin/password', async (req, res) => {
   const secret = req.headers['admin-secret'] || req.query.secret;
-  if (secret !== ADMIN_SECRET) {
-    return res.status(401).json({ error: 'No autorizado' });
-  }
-  
+  if (secret !== ADMIN_SECRET) return res.status(401).json({ error: 'No autorizado' });
   const currentPass = getCurrentPassword();
   const daysLeft = getDaysUntilExpiry();
-  
-  // Enviar por Telegram al consultar
   const msg = `🔑 <b>Contraseña CryptoMike VIP</b>\n\n🗝️ Contraseña: <code>${currentPass}</code>\n⏱️ Expira en: ${daysLeft} días\n📅 Fecha consulta: ${new Date().toLocaleString('es-ES')}\n\n📢 Envía esta contraseña a tu canal VIP`;
   await sendTelegram(msg);
-  
-  res.json({
-    password: currentPass,
-    expires_in_days: daysLeft,
-    expiry_date: getPasswordExpiry().toISOString()
-  });
+  res.json({ password: currentPass, expires_in_days: daysLeft, expiry_date: getPasswordExpiry().toISOString() });
 });
 
 // ═══════════════════════════
@@ -247,8 +190,7 @@ app.get('/admin/password', async (req, res) => {
 function signBitunix(apiKey, secret, nonce, timestamp, queryStr, bodyStr) {
   const digestInput = nonce + timestamp + apiKey + (queryStr || '') + (bodyStr || '');
   const digest = crypto.createHash('sha256').update(digestInput).digest('hex');
-  const sign = crypto.createHash('sha256').update(digest + secret).digest('hex');
-  return sign;
+  return crypto.createHash('sha256').update(digest + secret).digest('hex');
 }
 
 function buildQueryStr(params) {
@@ -256,53 +198,29 @@ function buildQueryStr(params) {
   return Object.keys(params).sort().map(k => k + params[k]).join('');
 }
 
-function buildBodyStr(obj) {
-  if (!obj) return '';
-  return JSON.stringify(obj);
-}
-
 function bitunixCall(method, path, apiKey, secret, queryParams, bodyObj) {
   return new Promise((resolve, reject) => {
     const ts = Date.now().toString();
     const nonce = crypto.randomBytes(16).toString('hex').substring(0, 32);
-    const bodyStr = buildBodyStr(bodyObj);
+    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
     const queryStr = buildQueryStr(queryParams);
     const sign = signBitunix(apiKey, secret, nonce, ts, queryStr, bodyStr);
 
     let fullPath = path;
     if (queryParams && Object.keys(queryParams).length > 0) {
-      const urlParams = new URLSearchParams(queryParams).toString();
-      fullPath = `${path}?${urlParams}`;
+      fullPath = `${path}?${new URLSearchParams(queryParams).toString()}`;
     }
 
-    const headers = {
-      'Content-Type': 'application/json',
-      'api-key': apiKey,
-      'nonce': nonce,
-      'timestamp': ts,
-      'sign': sign,
-      'language': 'en-US'
-    };
-
-    console.log(`Bitunix ${method} ${path}`);
-
     const options = {
-      hostname: 'fapi.bitunix.com',
-      port: 443,
-      path: fullPath,
-      method: method,
-      headers: headers
+      hostname: 'fapi.bitunix.com', port: 443, path: fullPath, method: method,
+      headers: { 'Content-Type': 'application/json', 'api-key': apiKey, 'nonce': nonce, 'timestamp': ts, 'sign': sign, 'language': 'en-US' }
     };
 
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { resolve({ raw: data }); }
-      });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
     });
-
     req.on('error', (e) => reject(e));
     if (bodyStr) req.write(bodyStr);
     req.end();
@@ -322,9 +240,7 @@ app.post('/bitunix/leverage', async (req, res) => {
   const { apiKey, secret, symbol, leverage } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const result = await bitunixCall('POST', '/api/v1/futures/account/change_leverage', apiKey, secret, null, {
-      symbol, leverage: parseInt(leverage), marginCoin: 'USDT'
-    });
+    const result = await bitunixCall('POST', '/api/v1/futures/account/change_leverage', apiKey, secret, null, { symbol, leverage: parseInt(leverage), marginCoin: 'USDT' });
     res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -333,22 +249,39 @@ app.post('/bitunix/order', async (req, res) => {
   const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    // AHORA SÍ LEEMOS EL orderType QUE MANDA LA WEB
-    const body = {
-      symbol, qty: String(qty),
-      side: side === 'LONG' ? 'BUY' : 'SELL',
-      tradeSide: 'OPEN', 
-      orderType: orderType || 'MARKET',
-      effect: 'GTC', reduceOnly: false
-    };
-    
-    // SI ES LIMITE O STOP, LE PASAMOS EL PRECIO DE ENTRADA
-    if (price) { body.price = String(price); }
-    if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK'; }
-    if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK'; }
-    
-    const result = await bitunixCall('POST', '/api/v1/futures/trade/place_order', apiKey, secret, null, body);
-    res.json(result);
+    if (orderType === 'stop') {
+      // 🚀 ORDEN ACTIVATOR (Plan Order / Stop Condicional)
+      const body = {
+        symbol,
+        qty: String(qty),
+        side: side === 'LONG' ? 'BUY' : 'SELL',
+        tradeSide: 'OPEN',
+        orderType: 'MARKET', // Se ejecuta a mercado al romper el nivel
+        triggerPrice: String(price),
+        triggerType: 'MARK'
+      };
+      if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK'; }
+      if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK'; }
+      
+      const result = await bitunixCall('POST', '/api/v1/futures/trade/place_plan_order', apiKey, secret, null, body);
+      res.json(result);
+
+    } else {
+      // 🟢 ORDEN NORMAL (Market o Limit)
+      const body = {
+        symbol, qty: String(qty),
+        side: side === 'LONG' ? 'BUY' : 'SELL',
+        tradeSide: 'OPEN', 
+        orderType: orderType === 'limit' ? 'LIMIT' : 'MARKET',
+        effect: 'GTC', reduceOnly: false
+      };
+      if (orderType === 'limit' && price) { body.price = String(price); }
+      if (tp && parseFloat(tp) > 0) { body.tpPrice = String(tp); body.tpStopType = 'MARK'; }
+      if (sl && parseFloat(sl) > 0) { body.slPrice = String(sl); body.slStopType = 'MARK'; }
+      
+      const result = await bitunixCall('POST', '/api/v1/futures/trade/place_order', apiKey, secret, null, body);
+      res.json(result);
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -374,24 +307,14 @@ function bitmartCall(method, path, apiKey, secret, memo, bodyObj) {
     const timestamp = Date.now().toString();
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
     const sign = signBitmart(secret, timestamp, memo, bodyStr);
-    const headers = {
-      'Content-Type': 'application/json',
-      'X-BM-KEY': apiKey,
-      'X-BM-TIMESTAMP': timestamp,
-      'X-BM-SIGN': sign
-    };
+    const headers = { 'Content-Type': 'application/json', 'X-BM-KEY': apiKey, 'X-BM-TIMESTAMP': timestamp, 'X-BM-SIGN': sign };
     if (memo && memo.trim() !== '') headers['X-BM-MEMO'] = memo;
-    const options = {
-      hostname: 'api-cloud-v2.bitmart.com',
-      port: 443, path, method, headers
-    };
+    
+    const options = { hostname: 'api-cloud-v2.bitmart.com', port: 443, path, method, headers };
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { resolve({ raw: data }); }
-      });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
     });
     req.on('error', (e) => reject(e));
     if (bodyStr) req.write(bodyStr);
@@ -412,8 +335,7 @@ app.post('/leverage', async (req, res) => {
   const { apiKey, secret, memo, symbol, leverage, openType } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    const result = await bitmartCall('POST', '/contract/private/submit-leverage', apiKey, secret, memo,
-      { symbol, leverage: String(leverage), open_type: openType || 'isolated' });
+    const result = await bitmartCall('POST', '/contract/private/submit-leverage', apiKey, secret, memo, { symbol, leverage: String(leverage), open_type: openType || 'isolated' });
     res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -422,21 +344,33 @@ app.post('/order', async (req, res) => {
   const { apiKey, secret, memo, symbol, side, size, sl, tp, type, price } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   try {
-    // AHORA SÍ LEEMOS EL type QUE MANDA LA WEB
-    const body = { 
-      symbol, 
-      side: side === 'LONG' ? 1 : 4, 
-      type: type || 'market', 
-      size: parseInt(size) 
-    };
-    
-    // SI ES LIMITE O STOP, LE PASAMOS EL PRECIO DE ENTRADA
-    if (price) { body.price = String(price); }
-    if (tp && parseFloat(tp) > 0) body.preset_take_profit_price = String(tp);
-    if (sl && parseFloat(sl) > 0) body.preset_stop_loss_price = String(sl);
-    
-    const result = await bitmartCall('POST', '/contract/private/submit-order', apiKey, secret, memo, body);
-    res.json(result);
+    if (type === 'stop') {
+      // 🚀 BITMART PLAN ORDER
+      const body = { 
+        symbol, 
+        side: side === 'LONG' ? 1 : 4, 
+        type: 'market', 
+        size: parseInt(size),
+        trigger_price: String(price),
+        price_type: 1
+      };
+      const result = await bitmartCall('POST', '/contract/private/submit-plan-order', apiKey, secret, memo, body);
+      res.json(result);
+    } else {
+      // 🟢 ORDEN NORMAL
+      const body = { 
+        symbol, 
+        side: side === 'LONG' ? 1 : 4, 
+        type: type === 'limit' ? 'limit' : 'market', 
+        size: parseInt(size) 
+      };
+      if (type === 'limit' && price) { body.price = String(price); }
+      if (tp && parseFloat(tp) > 0) body.preset_take_profit_price = String(tp);
+      if (sl && parseFloat(sl) > 0) body.preset_stop_loss_price = String(sl);
+      
+      const result = await bitmartCall('POST', '/contract/private/submit-order', apiKey, secret, memo, body);
+      res.json(result);
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -449,7 +383,6 @@ app.post('/close', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Notificar contraseña al arrancar
 async function notifyPasswordOnStart() {
   const pass = getCurrentPassword();
   const days = getDaysUntilExpiry();
