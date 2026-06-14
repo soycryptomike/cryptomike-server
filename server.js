@@ -135,7 +135,7 @@ async function sendEmail(subject, body) {
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
-    message: 'CryptoMike VIP Server v10 (Smart Orders)',
+    message: 'CryptoMike VIP Server v11 (Plan Orders)',
     password_expires_in_days: getDaysUntilExpiry()
   });
 });
@@ -321,29 +321,44 @@ app.post('/bitunix/leverage', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// 🚀 EJECUCIÓN INTELIGENTE EN BITUNIX
+// 🚀 EJECUCIÓN INTELIGENTE EN BITUNIX (CORREGIDO PARA PLAN ORDERS)
 app.post('/bitunix/order', async (req, res) => {
   const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   
   try {
+    // 1. SI ES UNA ORDEN TRIGGER (Ruptura/Espera) -> Usamos "Plan Order"
+    if (orderType === 'stop_market') {
+       const planBody = {
+         symbol,
+         qty: String(qty),
+         side: side === 'LONG' ? 'BUY' : 'SELL',
+         tradeSide: 'OPEN',
+         orderType: 'MARKET', // Cuando rompa el nivel, que ejecute a mercado
+         triggerPrice: String(triggerPrice),
+         triggerType: 'MARK'
+       };
+
+       if (tp && parseFloat(tp) > 0) { planBody.tpPrice = String(tp); planBody.tpStopType = 'MARK'; }
+       if (sl && parseFloat(sl) > 0) { planBody.slPrice = String(sl); planBody.slStopType = 'MARK'; }
+
+       const result = await bitunixCall('POST', '/api/v1/futures/trade/place_plan_order', apiKey, secret, null, planBody);
+       return res.json(result);
+    }
+
+    // 2. SI ES UNA ORDEN NORMAL (Limit o Market) -> Usamos orden estándar
     const body = {
-      symbol, 
+      symbol,
       qty: String(qty),
       side: side === 'LONG' ? 'BUY' : 'SELL',
-      tradeSide: 'OPEN', 
-      effect: 'GTC', 
+      tradeSide: 'OPEN',
+      effect: 'GTC',
       reduceOnly: false
     };
 
-    // Clasificador inteligente de la orden
     if (orderType === 'limit') {
       body.orderType = 'LIMIT';
       body.price = String(price);
-    } else if (orderType === 'stop_market') {
-      body.orderType = 'STOP_MARKET';
-      body.triggerPrice = String(triggerPrice);
-      if (price) body.price = String(price); // Por si el exchange pide precio base
     } else {
       body.orderType = 'MARKET';
     }
@@ -428,7 +443,6 @@ app.post('/order', async (req, res) => {
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
   
   try {
-    // Si la web nos manda una orden Trigger (Stop-Market), usamos el endpoint de "Plan Order" de BitMart
     if (orderType === 'stop_market') {
        const body = { 
          symbol, 
@@ -447,7 +461,6 @@ app.post('/order', async (req, res) => {
        return res.json(result);
     }
 
-    // Si es Limit normal o Market, usamos el endpoint estándar
     const body = { symbol, side: side === 'LONG' ? 1 : 4, size: parseInt(size) };
     
     if (orderType === 'limit') {
@@ -474,7 +487,6 @@ app.post('/close', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Notificar contraseña al arrancar
 async function notifyPasswordOnStart() {
   const pass = getCurrentPassword();
   const days = getDaysUntilExpiry();
@@ -484,6 +496,6 @@ async function notifyPasswordOnStart() {
 }
 
 app.listen(PORT, () => {
-  console.log(`CryptoMike VIP Server v10 running on port ${PORT}`);
+  console.log(`CryptoMike VIP Server v11 running on port ${PORT}`);
   notifyPasswordOnStart();
 });
