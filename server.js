@@ -135,7 +135,7 @@ async function sendEmail(subject, body) {
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
-    message: 'CryptoMike VIP Server v11 (Plan Orders)',
+    message: 'CryptoMike VIP Server v12 (Plan Orders Clean)',
     password_expires_in_days: getDaysUntilExpiry()
   });
 });
@@ -321,7 +321,7 @@ app.post('/bitunix/leverage', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// 🚀 EJECUCIÓN INTELIGENTE EN BITUNIX (CORREGIDO PARA PLAN ORDERS)
+// 🚀 EJECUCIÓN INTELIGENTE EN BITUNIX (LIMPIO)
 app.post('/bitunix/order', async (req, res) => {
   const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
@@ -334,13 +334,13 @@ app.post('/bitunix/order', async (req, res) => {
          qty: String(qty),
          side: side === 'LONG' ? 'BUY' : 'SELL',
          tradeSide: 'OPEN',
-         orderType: 'MARKET', // Cuando rompa el nivel, que ejecute a mercado
-         triggerPrice: String(triggerPrice),
-         triggerType: 'MARK'
+         orderType: 'MARKET',
+         triggerPrice: String(triggerPrice)
+         // Omitimos triggerType para evitar error de Parameter Valid Failed
        };
 
-       if (tp && parseFloat(tp) > 0) { planBody.tpPrice = String(tp); planBody.tpStopType = 'MARK'; }
-       if (sl && parseFloat(sl) > 0) { planBody.slPrice = String(sl); planBody.slStopType = 'MARK'; }
+       if (tp && parseFloat(tp) > 0) { planBody.tpPrice = String(tp); }
+       if (sl && parseFloat(sl) > 0) { planBody.slPrice = String(sl); }
 
        const result = await bitunixCall('POST', '/api/v1/futures/trade/place_plan_order', apiKey, secret, null, planBody);
        return res.json(result);
@@ -437,7 +437,6 @@ app.post('/leverage', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// 🚀 EJECUCIÓN INTELIGENTE EN BITMART
 app.post('/order', async (req, res) => {
   const { apiKey, secret, memo, symbol, side, size, sl, tp, orderType, price, triggerPrice } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
@@ -496,6 +495,6 @@ async function notifyPasswordOnStart() {
 }
 
 app.listen(PORT, () => {
-  console.log(`CryptoMike VIP Server v11 running on port ${PORT}`);
+  console.log(`CryptoMike VIP Server v12 running on port ${PORT}`);
   notifyPasswordOnStart();
 });
