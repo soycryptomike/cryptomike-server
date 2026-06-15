@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v22 (Pionex Clean Signature Fix)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v23 (Pionex Futures Fix)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -337,19 +337,15 @@ app.post('/close', async (req, res) => {
 });
 
 // ═══════════════════════════
-// PIONEX (REAL - CORREGIDO)
+// PIONEX (REAL - CORREGIDO 100%)
 // ═══════════════════════════
-
 function pionexCall(method, path, apiKey, secret, bodyObj) {
   return new Promise((resolve, reject) => {
     const timestamp = Date.now().toString();
-    
-    // Inyectamos el timestamp en la ruta
     const fullPath = path.includes('?') ? `${path}&timestamp=${timestamp}` : `${path}?timestamp=${timestamp}`;
-    
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
     
-    // CORRECCIÓN: La firma en Pionex es el Método + URL_COMPLETA + Body (sin añadir el timestamp suelto otra vez)
+    // CORRECCIÓN: Firma limpia de redundancias
     const message = method + fullPath + bodyStr;
     const sign = crypto.createHmac('sha256', secret).update(message).digest('hex');
     
@@ -367,21 +363,22 @@ function pionexCall(method, path, apiKey, secret, bodyObj) {
   });
 }
 
+// OJO: Pionex usa el prefijo /uapi/ para futuros y /api/ para spot. Apuntamos a UAPI.
 app.post('/pionex/positions', async (req, res) => {
   const { apiKey, secret } = req.body;
-  try { res.json(await pionexCall('GET', '/api/v1/account/positions', apiKey, secret, null)); } 
+  try { res.json(await pionexCall('GET', '/uapi/v1/account/positions', apiKey, secret, null)); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/pionex/leverage', async (req, res) => {
   const { apiKey, secret, symbol, leverage } = req.body;
-  try { res.json(await pionexCall('POST', '/api/v1/account/leverage', apiKey, secret, { symbol, leverage })); } 
+  try { res.json(await pionexCall('POST', '/uapi/v1/account/leverage', apiKey, secret, { symbol, leverage })); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/pionex/orders', async (req, res) => {
   const { apiKey, secret } = req.body;
-  try { res.json(await pionexCall('GET', '/api/v1/trade/openOrders', apiKey, secret, null)); } 
+  try { res.json(await pionexCall('GET', '/uapi/v1/trade/openOrders', apiKey, secret, null)); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -395,7 +392,8 @@ app.post('/pionex/order', async (req, res) => {
       size: parseFloat(qty)
     };
     if (orderType === 'limit') body.price = parseFloat(price);
-    res.json(await pionexCall('POST', '/api/v1/trade/order', apiKey, secret, body));
+    
+    res.json(await pionexCall('POST', '/uapi/v1/trade/order', apiKey, secret, body));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
