@@ -13,16 +13,6 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 3000;
 
 // ═══════════════════════════
-// OBTENER LA IP DEL SERVIDOR
-// ═══════════════════════════
-let SERVER_IP = 'Calculando IP... actualiza la pagina en unos segundos';
-https.get('https://api.ipify.org', (res) => {
-  let ip = '';
-  res.on('data', d => ip += d);
-  res.on('end', () => { SERVER_IP = ip; console.log("IP del servidor:", SERVER_IP); });
-}).on('error', () => SERVER_IP = 'Error obteniendo IP');
-
-// ═══════════════════════════
 // CONFIG
 // ═══════════════════════════
 const TELEGRAM_TOKEN = '8693040210:AAHRZmAnwDT1MMgIGZgtm0yxwXCUm-bCvFQ';
@@ -110,17 +100,21 @@ function sendTelegram(message) {
   });
 }
 
+async function sendEmail(subject, body) {
+  try {
+    const transporter = nodemailer.createTransporter({
+      service: 'gmail',
+      auth: { user: process.env.EMAIL_USER || ADMIN_EMAIL, pass: process.env.EMAIL_PASS || '' }
+    });
+    await transporter.sendMail({ from: ADMIN_EMAIL, to: ADMIN_EMAIL, subject: `[CryptoMike VIP] ${subject}`, html: body });
+  } catch(e) {}
+}
+
 // ═══════════════════════════
-// HEALTH CHECK Y LECTURA DE IP
+// HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'CryptoMike VIP Server v24', 
-    server_ip: SERVER_IP, 
-    instrucciones: 'Copia el numero de server_ip y pegalo en la lista blanca de Pionex',
-    password_expires_in_days: getDaysUntilExpiry() 
-  });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v25 (Removed Pionex - Clean Version)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -340,65 +334,6 @@ app.post('/close', async (req, res) => {
   const { apiKey, secret, memo, symbol } = req.body;
   try { res.json(await bitmartCall('POST', '/contract/private/cancel-all-order', apiKey, secret, memo, { symbol })); } 
   catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ═══════════════════════════
-// PIONEX (REAL - CORREGIDO 100%)
-// ═══════════════════════════
-function pionexCall(method, path, apiKey, secret, bodyObj) {
-  return new Promise((resolve, reject) => {
-    const timestamp = Date.now().toString();
-    const fullPath = path.includes('?') ? `${path}&timestamp=${timestamp}` : `${path}?timestamp=${timestamp}`;
-    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
-    
-    const message = method + fullPath + bodyStr;
-    const sign = crypto.createHmac('sha256', secret).update(message).digest('hex');
-    
-    const headers = { 
-      'Content-Type': 'application/json', 
-      'PIONEX-KEY': apiKey, 
-      'PIONEX-SIGNATURE': sign 
-    };
-    
-    const req = https.request({ hostname: 'api.pionex.com', port: 443, path: fullPath, method, headers }, (res) => {
-      let data = ''; res.on('data', chunk => data += chunk);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
-    });
-    req.on('error', reject); if (bodyStr) req.write(bodyStr); req.end();
-  });
-}
-
-app.post('/pionex/positions', async (req, res) => {
-  const { apiKey, secret } = req.body;
-  try { res.json(await pionexCall('GET', '/uapi/v1/account/positions', apiKey, secret, null)); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/pionex/leverage', async (req, res) => {
-  const { apiKey, secret, symbol, leverage } = req.body;
-  try { res.json(await pionexCall('POST', '/uapi/v1/account/leverage', apiKey, secret, { symbol, leverage })); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/pionex/orders', async (req, res) => {
-  const { apiKey, secret } = req.body;
-  try { res.json(await pionexCall('GET', '/uapi/v1/trade/openOrders', apiKey, secret, null)); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/pionex/order', async (req, res) => {
-  const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
-  try {
-    const body = {
-      symbol,
-      side: side === 'LONG' ? 'BUY' : 'SELL',
-      type: orderType === 'market' ? 'MARKET' : 'LIMIT',
-      size: parseFloat(qty)
-    };
-    if (orderType === 'limit') body.price = parseFloat(price);
-    
-    res.json(await pionexCall('POST', '/uapi/v1/trade/order', apiKey, secret, body));
-  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.listen(PORT, () => console.log(`CryptoMike VIP Server running`));
