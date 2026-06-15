@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v19 (Added Pionex Demo)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v20 (Real Pionex)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -337,7 +337,7 @@ app.post('/close', async (req, res) => {
 });
 
 // ═══════════════════════════
-// PIONEX DEMO (NUEVO)
+// PIONEX (REAL)
 // ═══════════════════════════
 function signPionex(secret, timestamp, path, method, bodyStr) {
   const message = method + path + timestamp + (bodyStr || '');
@@ -357,7 +357,6 @@ function pionexCall(method, path, apiKey, secret, bodyObj) {
       'PIONEX-SIGNATURE': sign 
     };
     
-    // NOTA: Usamos el endpoint oficial para que pruebes. Si falla, ajustaremos a la URL exacta de Testnet.
     const req = https.request({ hostname: 'api.pionex.com', port: 443, path, method, headers }, (res) => {
       let data = ''; res.on('data', chunk => data += chunk);
       res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
@@ -366,22 +365,36 @@ function pionexCall(method, path, apiKey, secret, bodyObj) {
   });
 }
 
-// Plantillas preparadas para cuando pruebes Pionex Demo
 app.post('/pionex/positions', async (req, res) => {
-  // Cuando tengas la API de Pionex y veamos qué ruta usan exactamente para "Mock Trading", lo enlazamos aquí.
-  res.json({ code: 0, data: [] });
+  const { apiKey, secret } = req.body;
+  try { res.json(await pionexCall('GET', '/api/v1/account/positions', apiKey, secret, null)); } 
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/pionex/leverage', async (req, res) => {
-  res.json({ result: true });
+  const { apiKey, secret, symbol, leverage } = req.body;
+  try { res.json(await pionexCall('POST', '/api/v1/account/leverage', apiKey, secret, { symbol, leverage })); } 
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/pionex/orders', async (req, res) => {
-  res.json({ code: 0, data: [] });
+  const { apiKey, secret } = req.body;
+  try { res.json(await pionexCall('GET', '/api/v1/trade/openOrders', apiKey, secret, null)); } 
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/pionex/order', async (req, res) => {
-  res.json({ result: true, msg: 'Pionex en desarrollo, esperando enlace Testnet' });
+  const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
+  try {
+    const body = {
+      symbol,
+      side: side === 'LONG' ? 'BUY' : 'SELL',
+      type: orderType === 'market' ? 'MARKET' : 'LIMIT',
+      size: parseFloat(qty)
+    };
+    if (orderType === 'limit') body.price = parseFloat(price);
+    res.json(await pionexCall('POST', '/api/v1/trade/order', apiKey, secret, body));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.listen(PORT, () => console.log(`CryptoMike VIP Server running`));
