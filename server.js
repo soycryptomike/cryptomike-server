@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v18 (Full + Fixes)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v19 (Added Pionex Demo)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -204,7 +204,6 @@ app.post('/bitunix/leverage', async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// AQUI ESTA LA EXTRACCIÓN LIMPIA DE ÓRDENES PARA EL PANEL LATERAL
 app.post('/bitunix/orders', async (req, res) => {
   const { apiKey, secret } = req.body;
   if (!apiKey || !secret) return res.status(400).json({ error: 'Faltan credenciales' });
@@ -212,7 +211,6 @@ app.post('/bitunix/orders', async (req, res) => {
     let orders = [];
     try { 
       const open = await bitunixCall('GET', '/api/v1/futures/trade/open_orders', apiKey, secret, {}, null); 
-      // Abre la caja .list si Bitunix la envia así
       if (open && open.data) orders = orders.concat(open.data.list || open.data); 
     } catch(e) {}
     try { 
@@ -223,7 +221,6 @@ app.post('/bitunix/orders', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// AQUI ESTÁ LA SOLUCIÓN DEFINITIVA DE ACTIVADOR USANDO LA TERMINOLOGÍA CORRECTA
 app.post('/bitunix/order', async (req, res) => {
   const { apiKey, secret, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
   
@@ -337,6 +334,54 @@ app.post('/close', async (req, res) => {
   const { apiKey, secret, memo, symbol } = req.body;
   try { res.json(await bitmartCall('POST', '/contract/private/cancel-all-order', apiKey, secret, memo, { symbol })); } 
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════
+// PIONEX DEMO (NUEVO)
+// ═══════════════════════════
+function signPionex(secret, timestamp, path, method, bodyStr) {
+  const message = method + path + timestamp + (bodyStr || '');
+  return crypto.createHmac('sha256', secret).update(message).digest('hex');
+}
+
+function pionexCall(method, path, apiKey, secret, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const timestamp = Date.now().toString();
+    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
+    const sign = signPionex(secret, timestamp, path, method, bodyStr);
+    
+    const headers = { 
+      'Content-Type': 'application/json', 
+      'PIONEX-KEY': apiKey, 
+      'PIONEX-TIMESTAMP': timestamp, 
+      'PIONEX-SIGNATURE': sign 
+    };
+    
+    // NOTA: Usamos el endpoint oficial para que pruebes. Si falla, ajustaremos a la URL exacta de Testnet.
+    const req = https.request({ hostname: 'api.pionex.com', port: 443, path, method, headers }, (res) => {
+      let data = ''; res.on('data', chunk => data += chunk);
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
+    });
+    req.on('error', reject); if (bodyStr) req.write(bodyStr); req.end();
+  });
+}
+
+// Plantillas preparadas para cuando pruebes Pionex Demo
+app.post('/pionex/positions', async (req, res) => {
+  // Cuando tengas la API de Pionex y veamos qué ruta usan exactamente para "Mock Trading", lo enlazamos aquí.
+  res.json({ code: 0, data: [] });
+});
+
+app.post('/pionex/leverage', async (req, res) => {
+  res.json({ result: true });
+});
+
+app.post('/pionex/orders', async (req, res) => {
+  res.json({ code: 0, data: [] });
+});
+
+app.post('/pionex/order', async (req, res) => {
+  res.json({ result: true, msg: 'Pionex en desarrollo, esperando enlace Testnet' });
 });
 
 app.listen(PORT, () => console.log(`CryptoMike VIP Server running`));
