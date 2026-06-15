@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v20 (Real Pionex)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v21 (Pionex Timestamp Fix)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -347,17 +347,22 @@ function signPionex(secret, timestamp, path, method, bodyStr) {
 function pionexCall(method, path, apiKey, secret, bodyObj) {
   return new Promise((resolve, reject) => {
     const timestamp = Date.now().toString();
+    
+    // Inyectamos el timestamp en la ruta tal y como exige el error "no timestamp in uri args"
+    const fullPath = path.includes('?') ? `${path}&timestamp=${timestamp}` : `${path}?timestamp=${timestamp}`;
+    
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
-    const sign = signPionex(secret, timestamp, path, method, bodyStr);
+    
+    // OJO: Pionex requiere firmar usando la ruta completa con el timestamp incluido
+    const sign = signPionex(secret, timestamp, fullPath, method, bodyStr);
     
     const headers = { 
       'Content-Type': 'application/json', 
       'PIONEX-KEY': apiKey, 
-      'PIONEX-TIMESTAMP': timestamp, 
       'PIONEX-SIGNATURE': sign 
     };
     
-    const req = https.request({ hostname: 'api.pionex.com', port: 443, path, method, headers }, (res) => {
+    const req = https.request({ hostname: 'api.pionex.com', port: 443, path: fullPath, method, headers }, (res) => {
       let data = ''; res.on('data', chunk => data += chunk);
       res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
     });
