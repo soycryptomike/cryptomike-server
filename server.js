@@ -13,6 +13,16 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 3000;
 
 // ═══════════════════════════
+// OBTENER LA IP DEL SERVIDOR
+// ═══════════════════════════
+let SERVER_IP = 'Calculando IP... actualiza la pagina en unos segundos';
+https.get('https://api.ipify.org', (res) => {
+  let ip = '';
+  res.on('data', d => ip += d);
+  res.on('end', () => { SERVER_IP = ip; console.log("IP del servidor:", SERVER_IP); });
+}).on('error', () => SERVER_IP = 'Error obteniendo IP');
+
+// ═══════════════════════════
 // CONFIG
 // ═══════════════════════════
 const TELEGRAM_TOKEN = '8693040210:AAHRZmAnwDT1MMgIGZgtm0yxwXCUm-bCvFQ';
@@ -100,21 +110,17 @@ function sendTelegram(message) {
   });
 }
 
-async function sendEmail(subject, body) {
-  try {
-    const transporter = nodemailer.createTransporter({
-      service: 'gmail',
-      auth: { user: process.env.EMAIL_USER || ADMIN_EMAIL, pass: process.env.EMAIL_PASS || '' }
-    });
-    await transporter.sendMail({ from: ADMIN_EMAIL, to: ADMIN_EMAIL, subject: `[CryptoMike VIP] ${subject}`, html: body });
-  } catch(e) {}
-}
-
 // ═══════════════════════════
-// HEALTH CHECK
+// HEALTH CHECK Y LECTURA DE IP
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v23 (Pionex Futures Fix)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ 
+    status: 'ok', 
+    message: 'CryptoMike VIP Server v24', 
+    server_ip: SERVER_IP, 
+    instrucciones: 'Copia el numero de server_ip y pegalo en la lista blanca de Pionex',
+    password_expires_in_days: getDaysUntilExpiry() 
+  });
 });
 
 // ═══════════════════════════
@@ -345,7 +351,6 @@ function pionexCall(method, path, apiKey, secret, bodyObj) {
     const fullPath = path.includes('?') ? `${path}&timestamp=${timestamp}` : `${path}?timestamp=${timestamp}`;
     const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
     
-    // CORRECCIÓN: Firma limpia de redundancias
     const message = method + fullPath + bodyStr;
     const sign = crypto.createHmac('sha256', secret).update(message).digest('hex');
     
@@ -363,7 +368,6 @@ function pionexCall(method, path, apiKey, secret, bodyObj) {
   });
 }
 
-// OJO: Pionex usa el prefijo /uapi/ para futuros y /api/ para spot. Apuntamos a UAPI.
 app.post('/pionex/positions', async (req, res) => {
   const { apiKey, secret } = req.body;
   try { res.json(await pionexCall('GET', '/uapi/v1/account/positions', apiKey, secret, null)); } 
