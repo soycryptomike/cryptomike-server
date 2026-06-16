@@ -336,4 +336,17 @@ app.post('/close', async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.listen(PORT, () => console.log(`CryptoMike VIP Server running`));
+app.listen(PORT, async () => {
+  console.log(`CryptoMike VIP Server running`);
+  
+  // Generamos la contraseña actual
+  const currentPass = getCurrentPassword();
+  
+  // 1. La imprime en los logs de Render (por si acaso)
+  console.log(`=================================`);
+  console.log(`🔑 CONTRASEÑA ACTUAL: ${currentPass}`);
+  console.log(`=================================`);
+  
+  // 2. Te la envía por mensaje a tu Telegram automáticamente
+  await sendTelegram(`🔑 <b>SISTEMA REINICIADO / NUEVA QUINCENA</b>\n\nTu contraseña VIP actual es:\n<code>${currentPass}</code>\n\n<i>Cópiala y pégala en la web.</i>`);
+});
