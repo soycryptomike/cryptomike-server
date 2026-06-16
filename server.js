@@ -150,6 +150,20 @@ app.post('/auth', async (req, res) => {
 });
 
 // ═══════════════════════════
+// REGISTRO DE NUEVOS USUARIOS
+// ═══════════════════════════
+app.post('/registro', async (req, res) => {
+  const { email, uid, exchange } = req.body;
+  if (!email || !uid) return res.status(400).json({ success: false, error: 'Faltan datos' });
+
+  const msg = `📝 <b>NUEVA SOLICITUD DE REGISTRO</b>\n\n📧 Correo: <code>${email}</code>\n👤 UID: <code>${uid}</code>\n📊 Exchange: ${exchange}\n\n<i>Revisa tu panel de referidos. Si todo está OK, envíale la contraseña de la quincena.</i>`;
+
+  await sendTelegram(msg);
+
+  res.json({ success: true, message: 'En 24/48h recibirás un correo por parte del equipo de CryptoMike.' });
+});
+
+// ═══════════════════════════
 // BITUNIX CORE
 // ═══════════════════════════
 function signBitunix(apiKey, secret, nonce, timestamp, queryStr, bodyStr) {
