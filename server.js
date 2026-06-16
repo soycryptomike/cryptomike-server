@@ -153,10 +153,12 @@ app.post('/auth', async (req, res) => {
 // REGISTRO DE NUEVOS USUARIOS
 // ═══════════════════════════
 app.post('/registro', async (req, res) => {
-  const { email, uid, exchange } = req.body;
-  if (!email || !uid) return res.status(400).json({ success: false, error: 'Faltan datos' });
+  const { email, uid, exchange, telegramUser } = req.body;
+  if (!email || !uid || !telegramUser) return res.status(400).json({ success: false, error: 'Faltan datos' });
 
-  const msg = `📝 <b>NUEVA SOLICITUD DE REGISTRO</b>\n\n📧 Correo: <code>${email}</code>\n👤 UID: <code>${uid}</code>\n📊 Exchange: ${exchange}\n\n<i>Revisa tu panel de referidos. Si todo está OK, envíale la contraseña de la quincena.</i>`;
+  const cleanTelegram = telegramUser.startsWith('@') ? telegramUser : '@' + telegramUser;
+
+  const msg = `📝 <b>NUEVA SOLICITUD DE REGISTRO</b>\n\n📧 Correo: <code>${email}</code>\n👤 UID: <code>${uid}</code>\n📊 Exchange: ${exchange}\n✈️ Telegram: ${cleanTelegram}\n\n<i>Revisa tu panel de referidos. Si todo está OK, mándale un correo dándole la bienvenida.</i>`;
 
   await sendTelegram(msg);
 
