@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v25 (Removed BitMart - Clean Version)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v26 (Bitunix + Weex)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -275,6 +275,117 @@ app.post('/bitunix/order', async (req, res) => {
 app.post('/bitunix/close', async (req, res) => {
   const { apiKey, secret, symbol } = req.body;
   try { res.json(await bitunixCall('POST', '/api/v1/futures/trade/close_all_position', apiKey, secret, null, { symbol })); } 
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ═══════════════════════════
+// WEEX CORE
+// ═══════════════════════════
+function signWeex(secret, timestamp, method, requestPath, bodyStr) {
+  // Weex utiliza HMAC-SHA256 codificado en Base64 o Hexadecimal (Hex es más estándar para este payload)
+  const message = timestamp + method + requestPath + (bodyStr || '');
+  return crypto.createHmac('sha256', secret).update(message).digest('hex'); 
+}
+
+function weexCall(method, path, apiKey, secret, passphrase, queryParams, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const timestamp = Date.now().toString();
+    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
+    
+    let fullPath = path;
+    if (queryParams && Object.keys(queryParams).length > 0) {
+      fullPath = `${path}?${new URLSearchParams(queryParams).toString()}`;
+    }
+
+    const sign = signWeex(secret, timestamp, method, fullPath, bodyStr);
+
+    // Cabeceras estándar de la API de Weex
+    const headers = { 
+      'Content-Type': 'application/json', 
+      'weex-apikey': apiKey, 
+      'weex-ts': timestamp, 
+      'weex-sign': sign,
+      'weex-passphrase': passphrase 
+    };
+
+    const req = https.request({
+      hostname: 'api.weex.com', // URL base de la API de Weex
+      port: 443, 
+      path: fullPath, 
+      method: method,
+      headers: headers
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => { 
+          try { resolve(JSON.parse(data)); } 
+          catch(e) { resolve({ raw: data }); } 
+      });
+    });
+
+    req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+app.post('/weex/positions', async (req, res) => {
+  const { apiKey, secret, passphrase } = req.body;
+  if (!apiKey || !secret || !passphrase) return res.status(400).json({ error: 'Faltan credenciales' });
+  try { res.json(await weexCall('GET', '/api/v1/contract/position', apiKey, secret, passphrase, {}, null)); } 
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/weex/leverage', async (req, res) => {
+  const { apiKey, secret, passphrase, symbol, leverage } = req.body;
+  try { res.json(await weexCall('POST', '/api/v1/contract/account/setLeverage', apiKey, secret, passphrase, null, { symbol, leverage: parseInt(leverage) })); } 
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/weex/orders', async (req, res) => {
+  const { apiKey, secret, passphrase } = req.body;
+  if (!apiKey || !secret || !passphrase) return res.status(400).json({ error: 'Faltan credenciales' });
+  try {
+    let orders = [];
+    try { 
+      const open = await weexCall('GET', '/api/v1/contract/order/open', apiKey, secret, passphrase, {}, null); 
+      if (open && open.data) orders = orders.concat(open.data); 
+    } catch(e) {}
+    res.json({ code: 0, data: orders });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/weex/order', async (req, res) => {
+  const { apiKey, secret, passphrase, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
+  
+  try {
+    const body = {
+      symbol,
+      size: String(qty),
+      side: side === 'LONG' ? 'open_long' : 'open_short'
+    };
+
+    if (orderType === 'stop_market') {
+      body.type = 'stop_market'; 
+      body.triggerPrice = String(triggerPrice); 
+    } else if (orderType === 'limit') {
+      body.type = 'limit';
+      body.price = String(price);
+    } else {
+      body.type = 'market';
+    }
+
+    if (tp && parseFloat(tp) > 0) { body.presetTakeProfitPrice = String(tp); }
+    if (sl && parseFloat(sl) > 0) { body.presetStopLossPrice = String(sl); }
+    
+    res.json(await weexCall('POST', '/api/v1/contract/placeOrder', apiKey, secret, passphrase, null, body));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/weex/close', async (req, res) => {
+  const { apiKey, secret, passphrase, symbol } = req.body;
+  try { res.json(await weexCall('POST', '/api/v1/contract/cancelAll', apiKey, secret, passphrase, null, { symbol })); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
