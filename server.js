@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v25 (Removed Pionex - Clean Version)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v25 (Removed BitMart - Clean Version)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -275,80 +275,6 @@ app.post('/bitunix/order', async (req, res) => {
 app.post('/bitunix/close', async (req, res) => {
   const { apiKey, secret, symbol } = req.body;
   try { res.json(await bitunixCall('POST', '/api/v1/futures/trade/close_all_position', apiKey, secret, null, { symbol })); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ═══════════════════════════
-// BITMART
-// ═══════════════════════════
-function signBitmart(secret, timestamp, memo, bodyStr) {
-  const message = timestamp + '#' + (memo || '') + '#' + (bodyStr || '');
-  return crypto.createHmac('sha256', secret).update(message).digest('hex');
-}
-
-function bitmartCall(method, path, apiKey, secret, memo, bodyObj) {
-  return new Promise((resolve, reject) => {
-    const timestamp = Date.now().toString();
-    const bodyStr = bodyObj ? JSON.stringify(bodyObj) : '';
-    const sign = signBitmart(secret, timestamp, memo, bodyStr);
-    const headers = { 'Content-Type': 'application/json', 'X-BM-KEY': apiKey, 'X-BM-TIMESTAMP': timestamp, 'X-BM-SIGN': sign };
-    if (memo && memo.trim() !== '') headers['X-BM-MEMO'] = memo;
-    
-    const req = https.request({ hostname: 'api-cloud-v2.bitmart.com', port: 443, path, method, headers }, (res) => {
-      let data = ''; res.on('data', chunk => data += chunk);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve({ raw: data }); } });
-    });
-    req.on('error', reject); if (bodyStr) req.write(bodyStr); req.end();
-  });
-}
-
-app.post('/positions', async (req, res) => {
-  const { apiKey, secret, memo } = req.body;
-  try { res.json(await bitmartCall('GET', '/contract/private/position', apiKey, secret, memo, null)); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/leverage', async (req, res) => {
-  const { apiKey, secret, memo, symbol, leverage, openType } = req.body;
-  try { res.json(await bitmartCall('POST', '/contract/private/submit-leverage', apiKey, secret, memo, { symbol, leverage: String(leverage), open_type: openType || 'isolated' })); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/orders', async (req, res) => {
-  const { apiKey, secret, memo } = req.body;
-  try {
-    let orders = [];
-    try { const open = await bitmartCall('GET', '/contract/private/get-open-orders', apiKey, secret, memo, null); if (open && open.data) orders = orders.concat(open.data); } catch(e) {}
-    try { const plan = await bitmartCall('GET', '/contract/private/get-plan-order', apiKey, secret, memo, null); if (plan && plan.data) orders = orders.concat(plan.data); } catch(e) {}
-    res.json({ code: 1000, data: orders });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/order', async (req, res) => {
-  const { apiKey, secret, memo, symbol, side, size, sl, tp, orderType, price, triggerPrice } = req.body;
-  
-  try {
-    if (orderType === 'stop_market') {
-       const body = { 
-         symbol, side: side === 'LONG' ? 1 : 4, type: 'market', size: parseInt(size),
-         trigger_price: String(triggerPrice), executive_price: String(price || triggerPrice), price_way: 1, price_type: 1
-       };
-       if (tp && parseFloat(tp) > 0) body.preset_take_profit_price = String(tp);
-       if (sl && parseFloat(sl) > 0) body.preset_stop_loss_price = String(sl);
-       return res.json(await bitmartCall('POST', '/contract/private/submit-plan-order', apiKey, secret, memo, body));
-    }
-
-    const body = { symbol, side: side === 'LONG' ? 1 : 4, size: parseInt(size) };
-    if (orderType === 'limit') { body.type = 'limit'; body.price = String(price); } else { body.type = 'market'; }
-    if (tp && parseFloat(tp) > 0) body.preset_take_profit_price = String(tp);
-    if (sl && parseFloat(sl) > 0) body.preset_stop_loss_price = String(sl);
-    res.json(await bitmartCall('POST', '/contract/private/submit-order', apiKey, secret, memo, body));
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/close', async (req, res) => {
-  const { apiKey, secret, memo, symbol } = req.body;
-  try { res.json(await bitmartCall('POST', '/contract/private/cancel-all-order', apiKey, secret, memo, { symbol })); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
