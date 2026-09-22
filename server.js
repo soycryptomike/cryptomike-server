@@ -114,7 +114,7 @@ async function sendEmail(subject, body) {
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'CryptoMike VIP Server v26 (Bitunix + Weex)', password_expires_in_days: getDaysUntilExpiry() });
+  res.json({ status: 'ok', message: 'CryptoMike VIP Server v26 (Bitunix + Weex V3)', password_expires_in_days: getDaysUntilExpiry() });
 });
 
 // ═══════════════════════════
@@ -283,7 +283,6 @@ app.post('/bitunix/close', async (req, res) => {
 // WEEX CORE
 // ═══════════════════════════
 function signWeex(secret, timestamp, method, requestPath, bodyStr) {
-  // Weex utiliza HMAC-SHA256 codificado en Base64 o Hexadecimal (Hex es más estándar para este payload)
   const message = timestamp + method + requestPath + (bodyStr || '');
   return crypto.createHmac('sha256', secret).update(message).digest('base64'); 
 }
@@ -300,17 +299,16 @@ function weexCall(method, path, apiKey, secret, passphrase, queryParams, bodyObj
 
     const sign = signWeex(secret, timestamp, method, fullPath, bodyStr);
 
-    // Cabeceras estándar de la API de Weex
     const headers = { 
       'Content-Type': 'application/json', 
-      'weex-apikey': apiKey, 
-      'weex-ts': timestamp, 
-      'weex-sign': sign,
-      'weex-passphrase': passphrase 
+      'ACCESS-KEY': apiKey, 
+      'ACCESS-TIMESTAMP': timestamp, 
+      'ACCESS-SIGN': sign,
+      'ACCESS-PASSPHRASE': passphrase 
     };
 
     const req = https.request({
-      hostname: 'api-contract.weex.com', // URL base de la API de Weex
+      hostname: 'api-contract.weex.com', 
       port: 443, 
       path: fullPath, 
       method: method,
@@ -360,26 +358,27 @@ app.post('/weex/order', async (req, res) => {
   const { apiKey, secret, passphrase, symbol, side, qty, sl, tp, orderType, price, triggerPrice } = req.body;
   
   try {
+    const isLong = side === 'LONG';
     const body = {
-      symbol,
-      size: String(qty),
-      side: side === 'LONG' ? 'open_long' : 'open_short'
+      symbol: symbol,
+      side: isLong ? 'BUY' : 'SELL',
+      positionSide: isLong ? 'LONG' : 'SHORT',
+      quantity: String(qty),
+      newClientOrderId: "cm-" + Date.now() + Math.floor(Math.random()*1000)
     };
 
-    if (orderType === 'stop_market') {
-      body.type = 'stop_market'; 
-      body.triggerPrice = String(triggerPrice); 
-    } else if (orderType === 'limit') {
-      body.type = 'limit';
+    if (orderType === 'limit') {
+      body.type = 'LIMIT';
       body.price = String(price);
+      body.timeInForce = 'GTC';
     } else {
-      body.type = 'market';
+      body.type = 'MARKET';
     }
 
-    if (tp && parseFloat(tp) > 0) { body.presetTakeProfitPrice = String(tp); }
-    if (sl && parseFloat(sl) > 0) { body.presetStopLossPrice = String(sl); }
+    if (tp && parseFloat(tp) > 0) { body.tpTriggerPrice = String(tp); }
+    if (sl && parseFloat(sl) > 0) { body.slTriggerPrice = String(sl); }
     
-    res.json(await weexCall('POST', '/api/v1/contract/placeOrder', apiKey, secret, passphrase, null, body));
+    res.json(await weexCall('POST', '/capi/v3/order', apiKey, secret, passphrase, null, body));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -392,14 +391,11 @@ app.post('/weex/close', async (req, res) => {
 app.listen(PORT, async () => {
   console.log(`CryptoMike VIP Server running`);
   
-  // Generamos la contraseña actual
   const currentPass = getCurrentPassword();
   
-  // 1. La imprime en los logs de Render (por si acaso)
   console.log(`=================================`);
   console.log(`🔑 CONTRASEÑA ACTUAL: ${currentPass}`);
   console.log(`=================================`);
   
-  // 2. Te la envía por mensaje a tu Telegram automáticamente
   await sendTelegram(`🔑 <b>SISTEMA REINICIADO / NUEVA QUINCENA</b>\n\nTu contraseña VIP actual es:\n<code>${currentPass}</code>\n\n<i>Cópiala y pégala en la web.</i>`);
 });
