@@ -285,7 +285,7 @@ app.post('/bitunix/close', async (req, res) => {
 function signWeex(secret, timestamp, method, requestPath, bodyStr) {
   // Weex utiliza HMAC-SHA256 codificado en Base64 o Hexadecimal (Hex es más estándar para este payload)
   const message = timestamp + method + requestPath + (bodyStr || '');
-  return crypto.createHmac('sha256', secret).update(message).digest('hex'); 
+  return crypto.createHmac('sha256', secret).update(message).digest('base64'); 
 }
 
 function weexCall(method, path, apiKey, secret, passphrase, queryParams, bodyObj) {
