@@ -310,7 +310,7 @@ function weexCall(method, path, apiKey, secret, passphrase, queryParams, bodyObj
     };
 
     const req = https.request({
-      hostname: 'api.weex.com', // URL base de la API de Weex
+      hostname: 'api-contract.weex.com', // URL base de la API de Weex
       port: 443, 
       path: fullPath, 
       method: method,
