@@ -280,7 +280,7 @@ app.post('/bitunix/close', async (req, res) => {
 
 
 // ═══════════════════════════
-// WEEX CORE
+// WEEX CORE (Actualizado a V3)
 // ═══════════════════════════
 function signWeex(secret, timestamp, method, requestPath, bodyStr) {
   const message = timestamp + method + requestPath + (bodyStr || '');
@@ -331,14 +331,24 @@ function weexCall(method, path, apiKey, secret, passphrase, queryParams, bodyObj
 app.post('/weex/positions', async (req, res) => {
   const { apiKey, secret, passphrase } = req.body;
   if (!apiKey || !secret || !passphrase) return res.status(400).json({ error: 'Faltan credenciales' });
-  try { res.json(await weexCall('GET', '/api/v1/contract/position', apiKey, secret, passphrase, {}, null)); } 
+  try { res.json(await weexCall('GET', '/capi/v3/account/position/allPosition', apiKey, secret, passphrase, {}, null)); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/weex/leverage', async (req, res) => {
   const { apiKey, secret, passphrase, symbol, leverage } = req.body;
-  try { res.json(await weexCall('POST', '/api/v1/contract/account/setLeverage', apiKey, secret, passphrase, null, { symbol, leverage: parseInt(leverage) })); } 
-  catch(e) { res.status(500).json({ error: e.message }); }
+  try { 
+    let levStr = String(parseInt(leverage));
+    
+    // Weex V3 requiere establecer apalancamiento enviando la moneda de margen y cubriendo Long/Short
+    await weexCall('POST', '/capi/v3/account/setLeverage', apiKey, secret, passphrase, null, { symbol: symbol, leverage: levStr, marginCoin: 'USDT', positionSide: 'LONG' });
+    await weexCall('POST', '/capi/v3/account/setLeverage', apiKey, secret, passphrase, null, { symbol: symbol, leverage: levStr, marginCoin: 'USDT', positionSide: 'SHORT' });
+    
+    // Y un envío global por si la cuenta usa un modo cruzado distinto
+    let resLev = await weexCall('POST', '/capi/v3/account/setLeverage', apiKey, secret, passphrase, null, { symbol: symbol, leverage: levStr, marginCoin: 'USDT' });
+    
+    res.json(resLev);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/weex/orders', async (req, res) => {
@@ -347,7 +357,7 @@ app.post('/weex/orders', async (req, res) => {
   try {
     let orders = [];
     try { 
-      const open = await weexCall('GET', '/api/v1/contract/order/open', apiKey, secret, passphrase, {}, null); 
+      const open = await weexCall('GET', '/capi/v3/order/open', apiKey, secret, passphrase, {}, null); 
       if (open && open.data) orders = orders.concat(open.data); 
     } catch(e) {}
     res.json({ code: 0, data: orders });
@@ -364,6 +374,7 @@ app.post('/weex/order', async (req, res) => {
       side: isLong ? 'BUY' : 'SELL',
       positionSide: isLong ? 'LONG' : 'SHORT',
       quantity: String(qty),
+      size: String(qty), // Retrocompatibilidad para algunos pares
       newClientOrderId: "cm-" + Date.now() + Math.floor(Math.random()*1000)
     };
 
@@ -375,8 +386,17 @@ app.post('/weex/order', async (req, res) => {
       body.type = 'MARKET';
     }
 
-    if (tp && parseFloat(tp) > 0) { body.tpTriggerPrice = String(tp); }
-    if (sl && parseFloat(sl) > 0) { body.slTriggerPrice = String(sl); }
+    // Configuración estricta de TP y SL para Weex V3
+    if (tp && parseFloat(tp) > 0) { 
+        body.tpTriggerPrice = String(tp); 
+        body.presetTakeProfitPrice = String(tp); 
+        body.tpWorkingType = 'MARK_PRICE'; 
+    }
+    if (sl && parseFloat(sl) > 0) { 
+        body.slTriggerPrice = String(sl); 
+        body.presetStopLossPrice = String(sl); 
+        body.slWorkingType = 'MARK_PRICE'; 
+    }
     
     res.json(await weexCall('POST', '/capi/v3/order', apiKey, secret, passphrase, null, body));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -384,7 +404,7 @@ app.post('/weex/order', async (req, res) => {
 
 app.post('/weex/close', async (req, res) => {
   const { apiKey, secret, passphrase, symbol } = req.body;
-  try { res.json(await weexCall('POST', '/api/v1/contract/cancelAll', apiKey, secret, passphrase, null, { symbol })); } 
+  try { res.json(await weexCall('POST', '/capi/v3/order/cancelAll', apiKey, secret, passphrase, null, { symbol })); } 
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
