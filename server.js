@@ -14,7 +14,8 @@ const PORT = process.env.PORT || 3000;
 
 // ═══════════════════════════
 // CONFIG
-const TELEGRAM_TOKEN = '9295674898:AAFw6fwLFFQ5vSV4k_lrfYU3_39NW2cN9nk'; 
+// ═══════════════════════════
+const TELEGRAM_TOKEN = '9295674898:AAFw6fwLFFQ5vSV4k_lrfYU3_39NW2cN9nk';
 const TELEGRAM_CHAT_ID = '828991968';
 const ADMIN_EMAIL = 'miguel.tradingm@gmail.com';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'cryptomike_admin_2026';
@@ -110,7 +111,7 @@ async function sendEmail(subject, body) {
 }
 
 // ═══════════════════════════
-// MOTOR CUANTITATIVO SMC (AUTÓNOMO)
+// MOTOR CUANTITATIVO SMC (AUTÓNOMO CON ALERTAS DETALLADAS)
 // ═══════════════════════════
 function binanceKlines(symbol, interval, limit) {
   return new Promise((resolve, reject) => {
@@ -131,7 +132,6 @@ async function escanearMercadoSMC(symbol, interval = '15m') {
     const data = await binanceKlines(symbol, interval, 100);
     if (!Array.isArray(data)) return;
 
-    // Convertimos datos de Binance [Open, High, Low, Close] a objetos numéricos
     const velas = data.map(v => ({
       open: parseFloat(v[1]),
       high: parseFloat(v[2]),
@@ -139,11 +139,10 @@ async function escanearMercadoSMC(symbol, interval = '15m') {
       close: parseFloat(v[4])
     }));
 
-    const structurePeriod = 15; // Parámetro de detección de pivot
+    const structurePeriod = 15;
     let lastHigh = null;
     let lastLow = null;
 
-    // Detectar Pivots Estructurales
     for (let i = structurePeriod; i < velas.length - structurePeriod; i++) {
       let isPivotHigh = true;
       let isPivotLow = true;
@@ -161,7 +160,6 @@ async function escanearMercadoSMC(symbol, interval = '15m') {
     const velaAnterior = velas[velas.length - 2];
     let signal = null;
 
-    // Lógica de Ruptura (Cierre real, no mechas)
     if (lastHigh && velaActual.close > lastHigh && velaAnterior.close <= lastHigh) {
       signal = 'LONG';
     } else if (lastLow && velaActual.close < lastLow && velaAnterior.close >= lastLow) {
@@ -169,11 +167,27 @@ async function escanearMercadoSMC(symbol, interval = '15m') {
     }
 
     if (signal) {
-      const msg = `🤖 <b>MOTOR SMC ACTIVADO</b>\n\n🔹 Activo: <b>${symbol}</b>\n🔹 Estructura: <b>${signal} (Ruptura 15M)</b>\n🔹 Precio: $${velaActual.close}\n\n<i>Estructura rota detectada. Esperando validación o pullback.</i>`;
-      console.log(msg);
-      await sendTelegram(msg);
+      const precioActual = velaActual.close;
+      let atrAprox = precioActual * 0.008; 
       
-      // En la próxima fase, aquí conectaremos el cálculo del lote y la llamada al exchange o a la validación de Claude.
+      let entry = precioActual;
+      let sl = signal === 'LONG' ? entry - (atrAprox * 1.2) : entry + (atrAprox * 1.2);
+      let tp1 = signal === 'LONG' ? entry + (atrAprox * 1.0) : entry - (atrAprox * 1.0);
+      let tp2 = signal === 'LONG' ? entry + (atrAprox * 2.0) : entry - (atrAprox * 2.0);
+      let tp3 = signal === 'LONG' ? entry + (atrAprox * 3.5) : entry - (atrAprox * 3.5);
+
+      const msg = `🚨 <b>NUEVA OPORTUNIDAD SMC (PENDIENTE)</b> 🚨\n\n` +
+                  `🔹 <b>Activo:</b> ${symbol}\n` +
+                  `📈 <b>Dirección:</b> <b>${signal}</b>\n\n` +
+                  `🎯 <b>Entrada sugerida:</b> $${entry.toFixed(4)}\n` +
+                  `🛑 <b>Stop Loss:</b> $${sl.toFixed(4)}\n\n` +
+                  `🏆 <b>TP1:</b> $${tp1.toFixed(4)}\n` +
+                  `🏆 <b>TP2:</b> $${tp2.toFixed(4)}\n` +
+                  `🏆 <b>TP3:</b> $${tp3.toFixed(4)}\n\n` +
+                  `<i>Señal generada por el motor autónomo de tu servidor.</i>`;
+
+      console.log(`[ALERTA ENVIADA] ${symbol} ${signal}`);
+      await sendTelegram(msg);
     }
 
   } catch (e) {
@@ -185,7 +199,7 @@ function iniciarMotorSMC() {
   const monedas = ['XRPUSDT', 'XLMUSDT', 'HBARUSDT', 'BTCUSDT', 'SOLUSDT'];
   console.log("Iniciando Motor Cuantitativo SMC interno...");
   
-  // Escanea el mercado cada 60 segundos (60000 ms)
+  // Escanea el mercado cada 60 segundos
   setInterval(() => {
     monedas.forEach(m => escanearMercadoSMC(m, '15m'));
   }, 60000);
