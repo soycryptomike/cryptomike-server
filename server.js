@@ -111,6 +111,88 @@ async function sendEmail(subject, body) {
 }
 
 // ═══════════════════════════
+// MOTOR CUANTITATIVO SMC (AUTÓNOMO)
+// ═══════════════════════════
+function binanceKlines(symbol, interval, limit) {
+  return new Promise((resolve, reject) => {
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } 
+        catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function escanearMercadoSMC(symbol, interval = '15m') {
+  try {
+    const data = await binanceKlines(symbol, interval, 100);
+    if (!Array.isArray(data)) return;
+
+    // Convertimos datos de Binance [Open, High, Low, Close] a objetos numéricos
+    const velas = data.map(v => ({
+      open: parseFloat(v[1]),
+      high: parseFloat(v[2]),
+      low: parseFloat(v[3]),
+      close: parseFloat(v[4])
+    }));
+
+    const structurePeriod = 15; // Parámetro de detección de pivot
+    let lastHigh = null;
+    let lastLow = null;
+
+    // Detectar Pivots Estructurales
+    for (let i = structurePeriod; i < velas.length - structurePeriod; i++) {
+      let isPivotHigh = true;
+      let isPivotLow = true;
+      
+      for (let j = 1; j <= structurePeriod; j++) {
+        if (velas[i].high <= velas[i - j].high || velas[i].high <= velas[i + j].high) isPivotHigh = false;
+        if (velas[i].low >= velas[i - j].low || velas[i].low >= velas[i + j].low) isPivotLow = false;
+      }
+      
+      if (isPivotHigh) lastHigh = velas[i].high;
+      if (isPivotLow) lastLow = velas[i].low;
+    }
+
+    const velaActual = velas[velas.length - 1];
+    const velaAnterior = velas[velas.length - 2];
+    let signal = null;
+
+    // Lógica de Ruptura (Cierre real, no mechas)
+    if (lastHigh && velaActual.close > lastHigh && velaAnterior.close <= lastHigh) {
+      signal = 'LONG';
+    } else if (lastLow && velaActual.close < lastLow && velaAnterior.close >= lastLow) {
+      signal = 'SHORT';
+    }
+
+    if (signal) {
+      const msg = `🤖 <b>MOTOR SMC ACTIVADO</b>\n\n🔹 Activo: <b>${symbol}</b>\n🔹 Estructura: <b>${signal} (Ruptura 15M)</b>\n🔹 Precio: $${velaActual.close}\n\n<i>Estructura rota detectada. Esperando validación o pullback.</i>`;
+      console.log(msg);
+      await sendTelegram(msg);
+      
+      // En la próxima fase, aquí conectaremos el cálculo del lote y la llamada al exchange o a la validación de Claude.
+    }
+
+  } catch (e) {
+    console.error(`Error escaneando ${symbol}:`, e.message);
+  }
+}
+
+function iniciarMotorSMC() {
+  const monedas = ['XRPUSDT', 'XLMUSDT', 'HBARUSDT', 'BTCUSDT', 'SOLUSDT'];
+  console.log("Iniciando Motor Cuantitativo SMC interno...");
+  
+  // Escanea el mercado cada 60 segundos (60000 ms)
+  setInterval(() => {
+    monedas.forEach(m => escanearMercadoSMC(m, '15m'));
+  }, 60000);
+}
+
+// ═══════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════
 app.get('/', (req, res) => {
@@ -340,11 +422,9 @@ app.post('/weex/leverage', async (req, res) => {
   try { 
     let levStr = String(parseInt(leverage));
     
-    // Weex V3 requiere establecer apalancamiento enviando la moneda de margen y cubriendo Long/Short
     await weexCall('POST', '/capi/v3/account/setLeverage', apiKey, secret, passphrase, null, { symbol: symbol, leverage: levStr, marginCoin: 'USDT', positionSide: 'LONG' });
     await weexCall('POST', '/capi/v3/account/setLeverage', apiKey, secret, passphrase, null, { symbol: symbol, leverage: levStr, marginCoin: 'USDT', positionSide: 'SHORT' });
     
-    // Y un envío global por si la cuenta usa un modo cruzado distinto
     let resLev = await weexCall('POST', '/capi/v3/account/setLeverage', apiKey, secret, passphrase, null, { symbol: symbol, leverage: levStr, marginCoin: 'USDT' });
     
     res.json(resLev);
@@ -374,7 +454,7 @@ app.post('/weex/order', async (req, res) => {
       side: isLong ? 'BUY' : 'SELL',
       positionSide: isLong ? 'LONG' : 'SHORT',
       quantity: String(qty),
-      size: String(qty), // Retrocompatibilidad para algunos pares
+      size: String(qty), 
       newClientOrderId: "cm-" + Date.now() + Math.floor(Math.random()*1000)
     };
 
@@ -386,7 +466,6 @@ app.post('/weex/order', async (req, res) => {
       body.type = 'MARKET';
     }
 
-    // Configuración estricta de TP y SL para Weex V3
     if (tp && parseFloat(tp) > 0) { 
         body.tpTriggerPrice = String(tp); 
         body.presetTakeProfitPrice = String(tp); 
@@ -410,6 +489,8 @@ app.post('/weex/close', async (req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`CryptoMike VIP Server running`);
+  
+  iniciarMotorSMC(); // <--- INICIA EL ESCANEO AUTÓNOMO
   
   const currentPass = getCurrentPassword();
   
