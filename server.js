@@ -14,8 +14,7 @@ const PORT = process.env.PORT || 3000;
 
 // ═══════════════════════════
 // CONFIG
-// ═══════════════════════════
-const TELEGRAM_TOKEN = '8693040210:AAHRZmAnwDT1MMgIGZgtm0yxwXCUm-bCvFQ';
+const TELEGRAM_TOKEN = '9295674898:AAFw6fwLFFQ5vSV4k_lrfYU3_39NW2cN9nk'; 
 const TELEGRAM_CHAT_ID = '828991968';
 const ADMIN_EMAIL = 'miguel.tradingm@gmail.com';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'cryptomike_admin_2026';
