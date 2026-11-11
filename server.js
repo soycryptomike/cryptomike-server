@@ -129,7 +129,8 @@ function binanceKlines(symbol, interval, limit) {
 
 async function escanearMercadoSMC(symbol, interval = '15m') {
   try {
-    const data = await binanceKlines(symbol, interval, 100);
+    // Ampliado a 500 velas para evitar falta de datos históricos
+    const data = await binanceKlines(symbol, interval, 500);
     if (!Array.isArray(data)) return;
 
     const velas = data.map(v => ({
